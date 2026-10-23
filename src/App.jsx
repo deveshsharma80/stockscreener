@@ -14,6 +14,35 @@ function useHashPage() {
 }
 
 const REFRESH_MS = 10_000;
+
+// ---- Stocks table filters (all dates/times are Indian time, like Chartink)
+const NO_SCAN = '__none__';
+const EMPTY_FILTERS = { period: 'all', from: '', to: '', tFrom: '', tTo: '', scan: '' };
+const HIT_PERIODS = [
+  ['all', 'All'],
+  ['today', 'Today'],
+  ['yesterday', 'Yesterday'],
+  ['7d', '7 days'],
+  ['custom', 'Dates…'],
+];
+const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const istTimeOf = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(11, 19);
+
+// Returns a test for an IST date string (YYYY-MM-DD)
+function periodMatcher({ period, from, to }) {
+  const today = istToday();
+  if (period === 'today') return (d) => d === today;
+  if (period === 'yesterday') {
+    const y = shiftDay(today, -1);
+    return (d) => d === y;
+  }
+  if (period === '7d') {
+    const start = shiftDay(today, -6);
+    return (d) => d >= start;
+  }
+  if (period === 'custom') return (d) => (!from || d >= from) && (!to || d <= to);
+  return () => true;
+}
 const num = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
 
@@ -31,6 +60,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [auto, setAuto] = useState(true);
   const [filter, setFilter] = useState('');
+  // HitTime / Scan filters for the Stocks table (dates and times in IST)
+  const [hf, setHf] = useState(EMPTY_FILTERS);
+  const setHfKey = (k) => (e) => setHf((f) => ({ ...f, [k]: e.target.value }));
   const [sort, setSort] = useState({ key: 'HitTime', dir: 'desc' });
   const [lastLoad, setLastLoad] = useState(null);
   const [showDelete, setShowDelete] = useState(false);
@@ -58,16 +90,27 @@ export default function App() {
     return () => clearInterval(t);
   }, [auto, load]);
 
+  const scanNames = useMemo(
+    () => [...new Set(data.rows.map((r) => r.ScanName).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [data.rows]
+  );
+  const hasNoScanRows = useMemo(() => data.rows.some((r) => !r.ScanName), [data.rows]);
+  const filtersOn = filter.trim() || hf.period !== 'all' || hf.scan || hf.tFrom || hf.tTo;
+
   const rows = useMemo(() => {
     const q = filter.trim().toUpperCase();
-    const list = q
-      ? data.rows.filter(
-          (r) =>
-            r.StockSymbol.includes(q) ||
-            String(r.StockID).toUpperCase().includes(q) ||
-            String(r.ScanName || '').toUpperCase().includes(q)
-        )
-      : data.rows;
+    const inPeriod = periodMatcher(hf);
+    const list = data.rows.filter((r) => {
+      if (q && !(r.StockSymbol.includes(q) || String(r.StockID).toUpperCase().includes(q) || String(r.ScanName || '').toUpperCase().includes(q))) return false;
+      if (hf.scan === NO_SCAN ? r.ScanName : hf.scan && r.ScanName !== hf.scan) return false;
+      if (!inPeriod(istDateOf(r.HitTime))) return false;
+      if (hf.tFrom || hf.tTo) {
+        const t = istTimeOf(r.HitTime);
+        if (hf.tFrom && t < hf.tFrom) return false;
+        if (hf.tTo && t > `${hf.tTo}:59`) return false;
+      }
+      return true;
+    });
     const { key, dir } = sort;
     const val = (r) => (key === 'HitTime' ? new Date(r.HitTime).getTime() : r[key] ?? (key === 'TriggerPrice' ? -Infinity : ''));
     return [...list].sort((a, b) => {
@@ -75,7 +118,7 @@ export default function App() {
       const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
       return dir === 'asc' ? c : -c;
     });
-  }, [data.rows, filter, sort]);
+  }, [data.rows, filter, sort, hf]);
 
   const stats = useMemo(() => {
     const all = data.rows;
@@ -143,12 +186,6 @@ export default function App() {
         <div className="card-head">
           <h2>Stocks table</h2>
           <div className="head-actions">
-            <input
-              className="search"
-              placeholder="Filter by symbol, scan or ID"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
             <button
               className={`btn danger-outline ${showDelete ? 'pressed' : ''}`}
               onClick={() => setShowDelete((v) => !v)}
@@ -166,6 +203,48 @@ export default function App() {
             onDeleted={load}
           />
         )}
+        <div className="filters hit-filters">
+          <input
+            className="search"
+            placeholder="Search symbol or ID"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <div className="fgroup">
+            <span className="flabel">HitTime</span>
+            <div className="seg" role="group" aria-label="HitTime">
+              {HIT_PERIODS.map(([v, label]) => (
+                <button key={v} className={hf.period === v ? 'on' : ''} onClick={() => setHf((f) => ({ ...f, period: v }))}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {hf.period === 'custom' && (
+            <div className="fgroup">
+              <input type="date" className="finput" value={hf.from} max={hf.to || undefined} onChange={setHfKey('from')} aria-label="From date" />
+              <span className="fsep">to</span>
+              <input type="date" className="finput" value={hf.to} min={hf.from || undefined} onChange={setHfKey('to')} aria-label="To date" />
+            </div>
+          )}
+          <div className="fgroup">
+            <span className="flabel">Time</span>
+            <input type="time" className="finput" value={hf.tFrom} onChange={setHfKey('tFrom')} aria-label="From time" />
+            <span className="fsep">to</span>
+            <input type="time" className="finput" value={hf.tTo} onChange={setHfKey('tTo')} aria-label="To time" />
+          </div>
+          <div className="fgroup">
+            <span className="flabel">Scan</span>
+            <select className="select" value={hf.scan} onChange={setHfKey('scan')}>
+              <option value="">All scans</option>
+              {scanNames.map((s) => <option key={s} value={s}>{s}</option>)}
+              {hasNoScanRows && <option value={NO_SCAN}>(no scan name)</option>}
+            </select>
+          </div>
+          {filtersOn && (
+            <button className="link" onClick={() => { setHf(EMPTY_FILTERS); setFilter(''); }}>Clear filters</button>
+          )}
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -206,13 +285,14 @@ export default function App() {
           </table>
           {!loading && rows.length === 0 && (
             <div className="empty">
-              {data.rows.length ? 'No rows match the filter.' : 'No hits yet. Rows appear here when a Chartink alert fires.'}
+              {data.rows.length ? 'No rows match these filters.' : 'No hits yet. Rows appear here when a Chartink alert fires.'}
             </div>
           )}
           {loading && <div className="empty">Loading…</div>}
         </div>
         <div className="foot">
           Showing {rows.length.toLocaleString()} of {data.total.toLocaleString()}
+          {filtersOn && <> · filtered</>}
           {lastLoad && <> · updated {lastLoad.toLocaleTimeString()}</>}
         </div>
       </section>

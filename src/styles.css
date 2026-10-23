@@ -224,3 +224,16 @@ tr.detail:hover { background: var(--surface-2); }
 .dp-summary b { color: var(--danger); }
 .dp-note { color: var(--muted); font-size: 13px; }
 .dp-ask { font-size: 14px; font-weight: 600; color: var(--danger); }
+
+/* Stocks table filters */
+.hit-filters { gap: 10px 16px; }
+.hit-filters .search { width: 190px; }
+.fgroup { display: inline-flex; align-items: center; gap: 6px; }
+.flabel { font-size: 12px; font-weight: 600; color: var(--muted); }
+.fsep { font-size: 13px; color: var(--muted); }
+.finput {
+  font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+.finput:focus, .select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+@media (max-width: 560px) { .hit-filters .search { width: 100%; } .fgroup { flex-wrap: wrap; } }
