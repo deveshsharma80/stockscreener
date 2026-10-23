@@ -33,6 +33,7 @@ export default function App() {
   const [filter, setFilter] = useState('');
   const [sort, setSort] = useState({ key: 'HitTime', dir: 'desc' });
   const [lastLoad, setLastLoad] = useState(null);
+  const [showDelete, setShowDelete] = useState(false);
   const page = useHashPage();
 
   const load = useCallback(async () => {
@@ -141,13 +142,30 @@ export default function App() {
       <section className="card">
         <div className="card-head">
           <h2>Stocks table</h2>
-          <input
-            className="search"
-            placeholder="Filter by symbol, scan or ID"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
+          <div className="head-actions">
+            <input
+              className="search"
+              placeholder="Filter by symbol, scan or ID"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            <button
+              className={`btn danger-outline ${showDelete ? 'pressed' : ''}`}
+              onClick={() => setShowDelete((v) => !v)}
+              aria-expanded={showDelete}
+            >
+              Delete…
+            </button>
+          </div>
         </div>
+        {showDelete && (
+          <DeletePanel
+            rows={data.rows}
+            total={data.total}
+            onClose={() => setShowDelete(false)}
+            onDeleted={load}
+          />
+        )}
         <div className="table-wrap">
           <table>
             <thead>
@@ -413,4 +431,153 @@ function ChartinkSetup({ secretRequired }) {
       </div>
     </section>
   );
+}
+
+// ---------------------------------------------------------------- delete
+
+const DAY_MS = 86_400_000;
+const istDayStart = (d) => Date.parse(`${d}T00:00:00+05:30`);
+// Today's date in India as YYYY-MM-DD
+const istToday = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+const istDateOf = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
+const SECRET_KEY = 'stockhits.secret';
+
+function readSavedSecret() {
+  try {
+    return localStorage.getItem(SECRET_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function DeletePanel({ rows, total, onClose, onDeleted }) {
+  const today = istToday();
+  const oldest = rows.length ? istDateOf(rows.reduce((a, b) => (a.HitTime < b.HitTime ? a : b)).HitTime) : today;
+  const [mode, setMode] = useState('range');
+  const [from, setFrom] = useState(oldest);
+  const [to, setTo] = useState(today);
+  const [secret, setSecret] = useState(readSavedSecret);
+  const [remember, setRemember] = useState(() => Boolean(readSavedSecret()));
+  const [confirming, setConfirming] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  const rangeError = mode === 'range' && (!from || !to ? 'Pick both dates' : from > to ? '"From" must be on or before "To"' : '');
+
+  const count = useMemo(() => {
+    if (mode === 'all') return total;
+    if (rangeError) return 0;
+    const start = istDayStart(from);
+    const end = istDayStart(to) + DAY_MS;
+    return rows.filter((r) => {
+      const t = new Date(r.HitTime).getTime();
+      return t >= start && t < end;
+    }).length;
+  }, [mode, from, to, rows, total, rangeError]);
+
+  // Any change to what will be deleted cancels a pending confirmation.
+  useEffect(() => setConfirming(false), [mode, from, to]);
+
+  const doDelete = async () => {
+    setStatus({ kind: 'busy', text: 'Deleting…' });
+    try {
+      try {
+        if (remember) localStorage.setItem(SECRET_KEY, secret.trim());
+        else localStorage.removeItem(SECRET_KEY);
+      } catch {}
+      const r = await fetch('/api/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': secret.trim() },
+        body: JSON.stringify(mode === 'all' ? { mode } : { mode, from, to }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setStatus({ kind: 'ok', text: `Deleted ${j.deleted.toLocaleString()} rows. ${j.remaining.toLocaleString()} left.` });
+      setConfirming(false);
+      onDeleted();
+    } catch (e) {
+      setStatus({ kind: 'err', text: e.message });
+      setConfirming(false);
+    }
+  };
+
+  const what =
+    mode === 'all'
+      ? 'all data'
+      : from === to
+        ? fmtDay(from)
+        : `${fmtDay(from)} – ${fmtDay(to)}`;
+
+  return (
+    <div className="delete-panel">
+      <div className="dp-row">
+        <div className="seg" role="group" aria-label="What to delete">
+          <button className={mode === 'range' ? 'on' : ''} onClick={() => setMode('range')}>Date range</button>
+          <button className={mode === 'all' ? 'on' : ''} onClick={() => setMode('all')}>All data</button>
+        </div>
+        {mode === 'range' && (
+          <div className="dp-dates">
+            <label>
+              From
+              <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+            </label>
+            <label>
+              To
+              <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+            </label>
+            <span className="dp-quick">
+              <button className="link" onClick={() => { setFrom(today); setTo(today); }}>Today</button>
+              <button className="link" onClick={() => { setFrom(oldest); setTo(today); }}>Everything so far</button>
+            </span>
+          </div>
+        )}
+        <button className="link dp-close" onClick={onClose} aria-label="Close">Close</button>
+      </div>
+
+      <div className="dp-row">
+        <label className="dp-secret">
+          Webhook secret
+          <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="same as in Vercel" autoComplete="off" />
+        </label>
+        <label className="switch dp-remember">
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          <span>Remember on this device</span>
+        </label>
+      </div>
+
+      <div className="dp-row dp-foot">
+        <p className={`dp-summary ${count ? 'warn' : ''}`}>
+          {rangeError
+            ? rangeError
+            : count
+              ? <>This permanently deletes <b>{count.toLocaleString()}</b> {count === 1 ? 'row' : 'rows'} ({what}). It can't be undone.</>
+              : mode === 'all' ? <>There is no data to delete.</> : <>No rows in this date range.</>}
+          {mode === 'range' && !rangeError && <span className="dp-note"> Dates are in Indian time and include both days.</span>}
+        </p>
+        <div className="form-actions">
+          {!confirming ? (
+            <button
+              className="btn danger"
+              disabled={!count || !secret.trim() || status?.kind === 'busy'}
+              onClick={() => setConfirming(true)}
+            >
+              Delete {count ? count.toLocaleString() : ''} {count === 1 ? 'row' : 'rows'}
+            </button>
+          ) : (
+            <>
+              <span className="dp-ask">Are you sure?</span>
+              <button className="btn danger" onClick={doDelete} disabled={status?.kind === 'busy'}>
+                Yes, delete {mode === 'all' ? 'everything' : count.toLocaleString()}
+              </button>
+              <button className="btn" onClick={() => setConfirming(false)}>Cancel</button>
+            </>
+          )}
+          {status && <span className={`status ${status.kind}`}>{status.text}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function fmtDay(d) {
+  return new Date(`${d}T12:00:00+05:30`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 }

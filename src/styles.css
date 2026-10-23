@@ -195,3 +195,32 @@ tr.detail:hover { background: var(--surface-2); }
 @media (max-width: 960px) { .stats-4 { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 560px) { .push { margin-left: 0; } .filters .search { width: 100%; } }
 .screener th button { white-space: nowrap; }
+
+/* Delete */
+:root { --danger: #b91c1c; --danger-ink: #ffffff; --danger-bg: #fef2f2; }
+@media (prefers-color-scheme: dark) { :root { --danger: #f87171; --danger-ink: #2a0b0b; --danger-bg: #2a1414; } }
+.head-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.btn.danger { background: var(--danger); color: var(--danger-ink); border-color: transparent; font-weight: 600; }
+.btn.danger:hover:not(:disabled) { filter: brightness(1.08); background: var(--danger); }
+.btn.danger-outline { color: var(--danger); }
+.btn.danger-outline.pressed { background: var(--danger-bg); border-color: var(--danger); }
+.delete-panel { background: var(--danger-bg); border-bottom: 1px solid var(--border); padding: 14px 16px; display: grid; gap: 12px; }
+.dp-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.dp-dates { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.dp-dates label, .dp-secret { display: grid; gap: 4px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.dp-dates input, .dp-secret input {
+  font: inherit; font-size: 14px; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+}
+.dp-secret input { width: 240px; max-width: 100%; }
+.dp-quick { display: inline-flex; gap: 12px; padding-bottom: 8px; }
+.dp-close { margin-left: auto; align-self: flex-start; color: var(--muted); }
+.dp-remember { padding-bottom: 8px; font-size: 13px; }
+.delete-panel .seg button { background: var(--surface); }
+.delete-panel .seg button.on { background: var(--danger); color: var(--danger-ink); }
+.dp-foot { justify-content: space-between; align-items: center; }
+.dp-summary { margin: 0; font-size: 14px; color: var(--muted); flex: 1; min-width: 240px; }
+.dp-summary.warn { color: var(--text); }
+.dp-summary b { color: var(--danger); }
+.dp-note { color: var(--muted); font-size: 13px; }
+.dp-ask { font-size: 14px; font-weight: 600; color: var(--danger); }
