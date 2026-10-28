@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Screener from './Screener.jsx';
+import Ticker from './Ticker.jsx';
 
 // Hash routing (#/ and #/screener) needs no server rewrites on Vercel.
 function useHashPage() {
-  const read = () => (window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] === 'screener' ? 'screener' : 'hits');
+  const read = () => {
+    const p = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0];
+    return p === 'screener' || p === 'ticker' ? p : 'hits';
+  };
   const [page, setPage] = useState(read);
   useEffect(() => {
     const on = () => setPage(read());
@@ -84,11 +88,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (page === 'ticker') return; // the Ticker page has its own live feed
     load();
     if (!auto) return;
     const t = setInterval(load, REFRESH_MS);
     return () => clearInterval(t);
-  }, [auto, load]);
+  }, [auto, load, page]);
 
   const scanNames = useMemo(
     () => [...new Set(data.rows.map((r) => r.ScanName).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
@@ -139,16 +144,20 @@ export default function App() {
     setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }));
 
   return (
-    <div className="page">
+    <div className={`page ${page === 'ticker' ? 'page-wide' : ''}`}>
       <header className="top">
         <div>
-          <h1>{page === 'screener' ? 'Stocks Screener' : 'Stock Hits'}</h1>
+          <h1>{page === 'screener' ? 'Stocks Screener' : page === 'ticker' ? 'Ticker' : 'Stock Hits'}</h1>
           <p className="sub">
-            {page === 'screener' ? 'Every stock your scans have picked, one row per stock' : 'Signals received through the webhook'}
-            {data.storage && <span className="badge">{data.storage === 'blob' ? 'Vercel Blob' : 'local JSON'}</span>}
+            {page === 'screener'
+              ? 'Every stock your scans have picked, one row per stock'
+              : page === 'ticker'
+                ? 'Live prices for the stocks, indices and F&O contracts you pick, from Dhan'
+                : 'Signals received through the webhook'}
+            {page !== 'ticker' && data.storage && <span className="badge">{data.storage === 'blob' ? 'Vercel Blob' : 'local JSON'}</span>}
           </p>
         </div>
-        <div className="controls">
+        <div className="controls" hidden={page === 'ticker'}>
           <label className="switch">
             <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
             <span>Auto-refresh</span>
@@ -160,11 +169,14 @@ export default function App() {
       <nav className="tabs" aria-label="Pages">
         <a href="#/" className={page === 'hits' ? 'active' : ''}>Hits</a>
         <a href="#/screener" className={page === 'screener' ? 'active' : ''}>Screener</a>
+        <a href="#/ticker" className={page === 'ticker' ? 'active' : ''}>Ticker</a>
       </nav>
 
-      {error && <div className="alert">⚠ {error}</div>}
+      {error && page !== 'ticker' && <div className="alert">⚠ {error}</div>}
 
-      {page === 'screener' ? (
+      {page === 'ticker' ? (
+        <Ticker />
+      ) : page === 'screener' ? (
         <Screener rows={data.rows} total={data.total} loading={loading} lastLoad={lastLoad} />
       ) : (
         <>
