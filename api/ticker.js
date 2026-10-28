@@ -9,14 +9,22 @@
 // POST {action:"disconnect"}
 // POST {action:"add", key:"NSE_EQ:2885"}             add to watchlist
 // POST {action:"remove", key:"NSE_EQ:2885"}
+//
+// Paper trading (dummy fills at the live LTP, stored in db/paper_trades.json):
+// GET  ?action=paper                                  positions, trades, daily/weekly P&L
+// POST {action:"trade", key, side:"BUY"|"SELL", qty}  qty in shares (F&O: multiple of lot size)
+// POST {action:"paper-capital", amount}               set the starting amount (keeps trades)
+// POST {action:"paper-reset", amount?}                delete all paper trades, optionally set a new starting amount
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
+import { addTrade, checkFunds, computeBook, readAccount, readTrades, resetTrades, setCapital } from '../lib/paper.js';
 import {
   DhanError,
   SEGMENTS,
   clearCredentials,
   connectToken,
   getCredentials,
+  getFillQuote,
   getQuotes,
   lookupInstrument,
   marketStatus,
@@ -68,6 +76,19 @@ export default async function handler(req, res) {
         return res.json({ ok: true, rows: await addToWatchlist(String(body.key || '')) });
       case 'POST remove':
         return res.json({ ok: true, rows: await removeFromWatchlist(String(body.key || '')) });
+      case 'GET paper':
+        return res.json({ ok: true, ...(await paperBook()) });
+      case 'POST trade': {
+        const trade = await placePaperTrade(body);
+        return res.json({ ok: true, trade, ...(await paperBook()) });
+      }
+      case 'POST paper-capital':
+        await setCapital(body.amount);
+        return res.json({ ok: true, ...(await paperBook()) });
+      case 'POST paper-reset':
+        if (body.amount !== undefined && body.amount !== null && body.amount !== '') await setCapital(body.amount);
+        await resetTrades();
+        return res.json({ ok: true, ...(await paperBook()) });
       default:
         throw new HttpError(400, `Unknown action "${action}"`);
     }
@@ -163,8 +184,42 @@ async function quotes(keysParam) {
   const instruments = [];
   for (const k of keys) {
     const m = KEY_RE.exec(k);
-    if (!m) throw new HttpError(400, `Bad instrument key "${k}"`);
-    instruments.push({ segment: m[1], securityId: m[2] });
+    if (m) instruments.push({ segment: m[1], securityId: m[2] }); // skip anything malformed rather than fail the whole feed
   }
   return { quotes: await getQuotes(instruments) };
+}
+
+// ------------------------------------------------------------------ paper trading
+
+async function placePaperTrade({ key, side, qty }) {
+  key = String(key || '');
+  side = String(side || '').toUpperCase();
+  qty = Number(qty);
+  if (!KEY_RE.test(key)) throw new HttpError(400, 'Unknown instrument');
+  if (side !== 'BUY' && side !== 'SELL') throw new HttpError(400, 'Side must be BUY or SELL');
+  if (!Number.isInteger(qty) || qty <= 0 || qty > 10_000_000) throw new HttpError(400, 'Quantity must be a whole number above 0');
+
+  // Instrument details: from the watchlist, an earlier trade, or Dhan's list.
+  const inst =
+    (await readTable(WATCHLIST)).find((r) => r.key === key) ||
+    (await readTrades()).findLast((t) => t.key === key) ||
+    (await lookupInstrument(key));
+  if (!inst) throw new HttpError(404, `${key} is not a known instrument`);
+  const lot = Number(inst.lotSize) || 1;
+  if (inst.segment.endsWith('FNO') && qty % lot !== 0) {
+    throw new HttpError(400, `F&O quantity must be a multiple of the lot size (${lot})`);
+  }
+
+  const quote = await getFillQuote(inst);
+  const funds = checkFunds(await paperBook(), { key, side, qty, price: quote.ltp });
+  if (!funds.ok) {
+    const f = (v) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    throw new HttpError(400, `Not enough paper funds: this order needs ₹${f(funds.required)} (value + brokerage), available ₹${f(funds.available)}.`, { kind: 'funds' });
+  }
+  return addTrade({ inst, side, qty, price: quote.ltp, marketOpen: marketStatus().open });
+}
+
+async function paperBook() {
+  const [trades, account] = await Promise.all([readTrades(), readAccount()]);
+  return computeBook(trades, undefined, account);
 }
