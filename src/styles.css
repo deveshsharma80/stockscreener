@@ -339,3 +339,118 @@ table.ticker th:first-child { z-index: 3; }
 table.ticker tbody tr:hover td:first-child { background: var(--surface-2); }
 table.ticker td:first-child::after { content: ''; position: absolute; top: 0; right: -1px; bottom: 0; width: 1px; background: var(--border); }
 .page-wide { max-width: 1480px; }
+
+/* ---------------- Paper trading ---------------- */
+:root { --buy: #15803d; --buy-ink: #fff; --sell: #c2410c; --sell-ink: #fff; }
+@media (prefers-color-scheme: dark) { :root { --buy: #22c55e; --buy-ink: #04210f; --sell: #fb923c; --sell-ink: #2a1206; } }
+.tk-paper-tag { margin-left: auto; font-size: 12px; color: var(--muted); }
+.tk-trade-h { padding: 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.tk-bs { display: inline-flex; gap: 6px; }
+.bs {
+  font: inherit; font-size: 12.5px; font-weight: 700; padding: 4px 11px; border-radius: 6px; cursor: pointer;
+  background: transparent; border: 1px solid currentColor;
+}
+.bs.buy { color: var(--buy); }
+.bs.sell { color: var(--sell); }
+.bs.buy:hover, .bs.buy.on { background: var(--buy); color: var(--buy-ink); border-color: var(--buy); }
+.bs.sell:hover, .bs.sell.on { background: var(--sell); color: var(--sell-ink); border-color: var(--sell); }
+.tk-posq b.long, .tk-pos-table b.long { color: var(--buy); }
+.tk-posq b.short, .tk-pos-table b.short { color: var(--sell); }
+.tk-posq .muted-cell { font-size: 12px; }
+tr.tk-has-ticket > td { background: var(--surface-2); border-bottom-color: transparent; }
+tr.tk-ticket-row > td { background: var(--surface-2); padding: 0 16px 12px !important; white-space: normal; }
+tr.tk-ticket-row:hover { background: none; }
+table.ticker tr.tk-ticket-row td:first-child { position: static; }
+table.ticker tr.tk-ticket-row td:first-child::after { display: none; }
+.tk-ticket {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--buy); border-radius: 10px;
+  position: sticky; left: 16px; max-width: min(100%, calc(100vw - 72px));
+}
+.tk-ticket.is-sell { border-left-color: var(--sell); }
+.tk-side button.on.buy { background: var(--buy); color: var(--buy-ink); }
+.tk-side button.on.sell { background: var(--sell); color: var(--sell-ink); }
+.tk-qty { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.tk-qty input { width: 84px; font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.tk-ticket-info { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.btn.buy-btn { background: var(--buy); color: var(--buy-ink); border-color: transparent; font-weight: 700; }
+.btn.sell-btn { background: var(--sell); color: var(--sell-ink); border-color: transparent; font-weight: 700; }
+.btn.buy-btn:hover:not(:disabled), .btn.sell-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.tk-ticket-close { color: var(--muted); }
+.tk-positions .card-head { flex-wrap: wrap; }
+.tk-pos-sum { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.tk-pos-sum b { font-size: 14px; margin-left: 4px; }
+.tk-day-total b { font-size: 16px; }
+.tk-pos-msg { margin: 10px 16px 0; }
+tr.tk-closed td { color: var(--muted); }
+.tk-exit { padding: 4px 12px; font-size: 13px; }
+
+/* P&L page */
+.pnl-tiles { grid-template-columns: repeat(4, 1fr); }
+.mono-num { font-variant-numeric: tabular-nums; }
+.pnl-h { margin-right: 6px; }
+.pnl-day { color: var(--text); font-size: 14px; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+.pnl-now { margin-left: 8px; }
+.pnl-bar-h { padding: 10px; font-size: 12px; font-weight: 600; color: var(--muted); text-align: center; }
+table.pnl-report th:not(:first-child) { padding: 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
+table.pnl-report th:first-child { padding: 10px 16px; font-size: 12px; font-weight: 600; color: var(--muted); }
+table.pnl-trades th { padding: 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
+table.pnl-trades th:first-child { padding-left: 16px; }
+.pnl-bar-cell { min-width: 300px; }
+.pnl-bar { position: relative; display: inline-block; width: 160px; height: 14px; vertical-align: middle; margin-right: 10px; }
+.pnl-zero { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--muted); opacity: 0.6; }
+.pnl-fill { position: absolute; top: 2px; bottom: 2px; min-width: 2px; }
+.pnl-fill.up { background: var(--pos); border-radius: 0 4px 4px 0; }
+.pnl-fill.down { background: var(--neg); border-radius: 4px 0 0 4px; }
+.pnl-val { display: inline-block; min-width: 90px; text-align: right; font-weight: 650; }
+.pnl-open { margin-left: 10px; font-size: 12px; font-family: var(--mono); }
+.side-pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; letter-spacing: 0.03em; }
+.side-pill.buy { color: var(--buy); background: color-mix(in srgb, var(--buy) 13%, transparent); }
+.side-pill.sell { color: var(--sell); background: color-mix(in srgb, var(--sell) 13%, transparent); }
+.pnl-reset { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pnl-reset .muted { margin: 4px 0 0; }
+@media (max-width: 960px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .tk-paper-tag { margin-left: 0; } .pnl-bar { width: 100px; } }
+/* P&L bar fills (validated for colour-blind separation on both surfaces; direction + signed label are the secondary encoding) */
+:root { --bar-up: #15803d; --bar-down: #c2410c; }
+@media (prefers-color-scheme: dark) { :root { --bar-up: #16a34a; --bar-down: #ea580c; } }
+.pnl-fill.up { background: var(--bar-up); }
+.pnl-fill.down { background: var(--bar-down); }
+table.tk-pos-table th { padding: 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
+table.tk-pos-table th:first-child { padding-left: 16px; }
+@media (max-width: 560px) {
+  /* keep Day, Trades, Booked P&L, Cumulative on phones */
+  table.pnl-report th:nth-child(3), table.pnl-report td:nth-child(3),
+  table.pnl-report th:nth-child(4), table.pnl-report td:nth-child(4),
+  table.pnl-report th:nth-child(5), table.pnl-report td:nth-child(5) { display: none; }
+  .pnl-bar-cell { min-width: 0; }
+  .pnl-bar { display: none; }
+  .pnl-val { min-width: 0; }
+  .pnl-open { display: block; margin-left: 0; }
+  table.pnl-trades th:nth-child(6), table.pnl-trades td:nth-child(6),
+  table.pnl-trades th:nth-child(7), table.pnl-trades td:nth-child(7),
+  table.pnl-trades th:nth-child(8), table.pnl-trades td:nth-child(8) { display: none; }
+  table.pnl-report th:nth-child(6), table.pnl-report td:nth-child(6),
+  table.pnl-report th:nth-child(7), table.pnl-report td:nth-child(7) { display: none; }
+}
+@media (max-width: 560px) {
+  table.pnl-report td:first-child { white-space: normal; min-width: 96px; }
+  table.pnl-report .pnl-now { display: table; margin: 3px 0 0; }
+  table.pnl-report th, table.pnl-report td { padding-left: 8px !important; padding-right: 8px !important; }
+}
+
+/* Paper account */
+.tk-funds { display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.tk-funds b { color: var(--text); margin-left: 4px; }
+.tk-funds .link { margin-left: auto; }
+.pnl-account { margin-bottom: 16px; display: grid; gap: 12px; }
+.pnl-acct-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pnl-acct { display: flex; flex-wrap: wrap; gap: 10px 40px; margin: 0; }
+.pnl-acct div { display: grid; gap: 2px; }
+.pnl-acct dt { font-size: 12px; color: var(--muted); }
+.pnl-acct dd { margin: 0; font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.pnl-acct dd.big { font-size: 22px; }
+.pnl-acct-form { background: var(--surface-2); border-radius: 10px; padding: 12px; align-items: center; }
+.pnl-acct-form label { flex: 0 1 220px; }
+.pnl-acct-note { margin: 0; }
+@media (max-width: 560px) { .tk-funds .link { margin-left: 0; } }
