@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // Live market table for instruments you pick, fed by Dhan's Quote API through
 // /api/ticker (your Dhan token stays on the server).
 
-const SECRET_KEY = 'stockhits.secret';
+export const SECRET_KEY = 'stockhits.secret';
 const INTERVAL_KEY = 'stockhits.tickerInterval';
 const INTERVALS = [
   [1000, '1s'],
@@ -19,8 +19,10 @@ const TABS = [
   ['idx', 'Index'],
 ];
 
-const price = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const signed = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' });
+export const price = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// +₹1,234.50 / −₹56.00
+export const money = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}₹${price.format(Math.abs(v))}`;
+export const signed = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' });
 const two = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
 // Indian short form: 4.5K, 12.35L, 9.88Cr (browsers disagree on Intl's compact labels)
 const compact = {
@@ -34,7 +36,7 @@ const compact = {
 };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-const store = {
+export const store = {
   get(k) {
     try {
       return localStorage.getItem(k) || '';
@@ -50,26 +52,20 @@ const store = {
   },
 };
 
-const kindOf = (seg) => (seg === 'IDX_I' ? 'idx' : seg.endsWith('FNO') ? 'fno' : 'eq');
-const segLabel = (seg) => ({ IDX_I: 'INDEX', NSE_EQ: 'NSE', BSE_EQ: 'BSE', NSE_FNO: 'NFO', BSE_FNO: 'BFO' })[seg] || seg;
-const fmtExpiry = (e) => {
+export const kindOf = (seg) => (seg === 'IDX_I' ? 'idx' : seg.endsWith('FNO') ? 'fno' : 'eq');
+export const segLabel = (seg) => ({ IDX_I: 'INDEX', NSE_EQ: 'NSE', BSE_EQ: 'BSE', NSE_FNO: 'NFO', BSE_FNO: 'BFO' })[seg] || seg;
+export const fmtExpiry = (e) => {
   if (!e) return '';
   const [y, m, d] = e.split('-');
   return `${Number(d)} ${MONTHS[Number(m) - 1]} ${y.slice(2)}`;
 };
-const fmtTime = (t) => {
-  if (!t) return '';
-  if (typeof t === 'number') return new Date(t * (t < 1e12 ? 1000 : 1)).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
-  const m = /(\d{1,2}:\d{2}:\d{2})/.exec(String(t));
-  return m ? m[1] : String(t);
-};
-function describe(row) {
+export function describe(row) {
   if (row.instrument?.startsWith('OPT')) return `${row.underlying || row.symbol.split('-')[0]} ${row.strike} ${row.optionType}`;
   if (row.instrument?.startsWith('FUT')) return `${row.underlying || row.symbol.split('-')[0]} FUT`;
   return row.symbol || row.name;
 }
 
-async function api(secret, action, { method = 'GET', params = {}, body } = {}) {
+export async function api(secret, action, { method = 'GET', params = {}, body } = {}) {
   const qs = new URLSearchParams(method === 'GET' ? { action, ...params } : {}).toString();
   const r = await fetch(`/api/ticker${qs ? `?${qs}` : ''}`, {
     method,
@@ -111,15 +107,18 @@ export default function Ticker() {
   const [showConn, setShowConn] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [pageError, setPageError] = useState('');
+  const [book, setBook] = useState(null); // paper trading: positions, trades, reports
+  const [ticket, setTicket] = useState(null); // { key, side } — open Buy/Sell ticket
 
-  // Initial load: check secret, Dhan connection and the saved list.
+  // Initial load: check secret, Dhan connection, the saved list and paper book.
   const loadAll = useCallback(async (s) => {
     setPageError('');
     try {
-      const [st, wl] = await Promise.all([api(s, 'status', { params: { check: '1' } }), api(s, 'watchlist')]);
+      const [st, wl, pb] = await Promise.all([api(s, 'status', { params: { check: '1' } }), api(s, 'watchlist'), api(s, 'paper')]);
       setConn(st);
       setMarket(st.market);
       setRows(wl.rows);
+      setBook(pb);
       setUnlocked(true);
       if (!st.connected || st.problem) setShowConn(true);
       return true;
@@ -130,8 +129,20 @@ export default function Ticker() {
     }
   }, []);
 
+  // Try the secret saved on this device. If it's out of date (e.g. the secret
+  // was changed in Vercel), forget it so the user can type the current one.
+  const [savedFailed, setSavedFailed] = useState(false);
+  const [checking, setChecking] = useState(Boolean(secret));
   useEffect(() => {
-    if (secret) loadAll(secret);
+    if (!secret) return;
+    loadAll(secret).then((ok) => {
+      setChecking(false);
+      if (ok) return;
+      store.set(SECRET_KEY, '');
+      setSecret('');
+      setSavedFailed(true);
+      setPageError('');
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -140,8 +151,14 @@ export default function Ticker() {
     return () => document.removeEventListener('visibilitychange', on);
   }, []);
 
-  // ---- live polling (one request at a time, never overlapping)
-  const keys = useMemo(() => rows.map((r) => r.key).join(','), [rows]);
+  // ---- live polling (one request at a time, never overlapping). Open paper
+  // positions are always priced, even if removed from the watchlist.
+  const positions = book?.positions || [];
+  const posByKey = useMemo(() => new Map(positions.map((p) => [p.key, p])), [positions]);
+  const keys = useMemo(
+    () => [...new Set([...rows.map((r) => r.key), ...positions.filter((p) => p.qty !== 0).map((p) => p.key)])].join(','),
+    [rows, positions]
+  );
   const stoppedFor = feedError && (feedError.kind === 'auth' || feedError.kind === 'plan') ? feedError.kind : null;
   const running = unlocked && conn?.connected && !paused && !hidden && keys && !stoppedFor;
   const effectiveInterval = market && !market.open ? Math.max(intervalMs, CLOSED_INTERVAL) : intervalMs;
@@ -193,11 +210,19 @@ export default function Ticker() {
     try {
       const j = await api(secret, 'remove', { method: 'POST', body: { key } });
       setRows(j.rows);
+      if (ticket?.key === key) setTicket(null);
     } catch (e) {
       setPageError(e.message);
     } finally {
       setBusyKey('');
     }
+  };
+
+  // ---- paper trades (filled server-side at the live LTP)
+  const placeTrade = async (key, side, qty) => {
+    const j = await api(secret, 'trade', { method: 'POST', body: { key, side, qty } });
+    setBook(j);
+    return j.trade;
   };
 
   // ---- view
@@ -208,9 +233,16 @@ export default function Ticker() {
   }, [rows]);
 
   const view = useMemo(() => {
-    const list = rows.map((r, i) => ({ ...r, order: i, q: quotes[r.key] || null })).filter((r) => tab === 'all' || kindOf(r.segment) === tab);
+    const list = rows
+      .map((r, i) => {
+        const q = quotes[r.key] || null;
+        const p = posByKey.get(r.key);
+        const openPnl = p && p.qty && q?.ltp != null ? (q.ltp - p.avg) * p.qty : null;
+        return { ...r, order: i, q, pos: p || null, openPnl };
+      })
+      .filter((r) => tab === 'all' || kindOf(r.segment) === tab);
     if (sort.key === 'order') return list;
-    const val = (r) => (sort.key === 'name' ? describe(r) : r.q?.[sort.key] ?? null);
+    const val = (r) => (sort.key === 'name' ? describe(r) : sort.key === 'openPnl' ? r.openPnl : sort.key === 'posQty' ? r.pos?.qty || null : r.q?.[sort.key] ?? null);
     return list.sort((a, b) => {
       const x = val(a);
       const y = val(b);
@@ -220,17 +252,20 @@ export default function Ticker() {
       const c = typeof x === 'string' ? x.localeCompare(y) : x - y;
       return sort.dir === 'asc' ? c : -c;
     });
-  }, [rows, quotes, tab, sort]);
+  }, [rows, quotes, tab, sort, posByKey]);
 
   const showOI = view.some((r) => kindOf(r.segment) === 'fno');
+  const colCount = 9 + (showOI ? 1 : 0);
 
+  if (checking) return <p className="tk-note">Opening ticker…</p>;
   if (!unlocked) {
     return (
       <SecretGate
-        initial={secret}
         error={pageError}
+        notice={savedFailed ? 'The secret saved on this device no longer matches (it may have been changed in Vercel). Enter the current one.' : ''}
         onSubmit={async (s, remember) => {
           setSecret(s);
+          setSavedFailed(false);
           const ok = await loadAll(s);
           if (ok) store.set(SECRET_KEY, remember ? s : '');
         }}
@@ -248,6 +283,7 @@ export default function Ticker() {
       </button>
     </th>
   );
+  const openTicket = (key, side) => setTicket((t) => (t?.key === key && t.side === side ? null : { key, side }));
 
   return (
     <>
@@ -265,7 +301,7 @@ export default function Ticker() {
                   ? 'Paused'
                   : hidden
                     ? 'Paused while tab is hidden'
-                    : !rows.length
+                    : !keys
                       ? 'Add an instrument'
                       : lastAt
                         ? `Updated ${lastAt.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`
@@ -314,8 +350,8 @@ export default function Ticker() {
           {feedError.kind === 'rate' && ' Retrying in a few seconds.'}
         </div>
       )}
-      {market && !market.open && conn?.connected && rows.length > 0 && !feedError && (
-        <p className="tk-note">Market is closed, so prices refresh every 30 s and show the last traded values.</p>
+      {market && !market.open && conn?.connected && keys && !feedError && (
+        <p className="tk-note">Market is closed, so prices refresh every 30 s and show the last traded values. Paper trades fill at the last traded price.</p>
       )}
 
       <section className="card">
@@ -334,6 +370,7 @@ export default function Ticker() {
           {sort.key !== 'order' && (
             <button className="link" onClick={() => setSort({ key: 'order', dir: 'asc' })}>Back to my order</button>
           )}
+          <span className="tk-paper-tag">Buy / Sell are paper trades — no real orders</span>
         </div>
         <div className="table-wrap tall">
           <table className="ticker">
@@ -343,21 +380,30 @@ export default function Ticker() {
                 <Th k="ltp" className="num">LTP</Th>
                 <Th k="change" className="num">Chg</Th>
                 <Th k="changePct" className="num">Chg %</Th>
-                <Th k="bid" className="num">Bid</Th>
-                <Th k="ask" className="num">Ask</Th>
-                <Th k="open" className="num">Open</Th>
-                <Th k="high" className="num">High</Th>
-                <Th k="low" className="num">Low</Th>
-                <Th k="prevClose" className="num">Prev close</Th>
                 <Th k="volume" className="num">Volume</Th>
                 {showOI && <Th k="oi" className="num">OI</Th>}
-                <th className="tk-time-h">Last trade</th>
+                <Th k="posQty" className="num">Position</Th>
+                <Th k="openPnl" className="num">Open P&amp;L</Th>
+                <th className="tk-trade-h">Trade</th>
                 <th aria-label="Remove" />
               </tr>
             </thead>
             <tbody>
               {view.map((r) => (
-                <TickerRow key={r.key} row={r} showOI={showOI} busy={busyKey === r.key} onRemove={() => remove(r.key)} />
+                <TickerRow
+                  key={r.key}
+                  row={r}
+                  showOI={showOI}
+                  colCount={colCount}
+                  busy={busyKey === r.key}
+                  ticket={ticket?.key === r.key ? ticket.side : null}
+                  onTicket={(side) => openTicket(r.key, side)}
+                  onCloseTicket={() => setTicket(null)}
+                  onPlace={(side, qty) => placeTrade(r.key, side, qty)}
+                  brokeragePct={book?.brokeragePct ?? 1}
+                  account={book?.account}
+                  onRemove={() => remove(r.key)}
+                />
               ))}
             </tbody>
           </table>
@@ -372,13 +418,15 @@ export default function Ticker() {
           {conn?.connected && effectiveInterval !== intervalMs && ' · 30 s refresh while market is closed'}
         </div>
       </section>
+
+      <PositionsCard book={book} quotes={quotes} onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))} />
     </>
   );
 }
 
-// ------------------------------------------------------------------ row with tick flash
+// ------------------------------------------------------------------ row with tick flash + trade ticket
 
-function TickerRow({ row, showOI, busy, onRemove }) {
+function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicket, onPlace, onRemove, brokeragePct, account }) {
   const q = row.q;
   const prev = useRef(null);
   const [flash, setFlash] = useState({ dir: '', n: 0 });
@@ -391,47 +439,252 @@ function TickerRow({ row, showOI, busy, onRemove }) {
 
   const tone = q?.change > 0 ? 'pos' : q?.change < 0 ? 'neg' : '';
   const kind = kindOf(row.segment);
+  const tradable = kind !== 'idx';
   const P = (v) => (v == null || (v === 0 && kind !== 'fno') ? <span className="muted-dash">—</span> : price.format(v));
+  const pos = row.pos;
 
   return (
-    <tr>
-      <td className="tk-inst">
-        <div className="tk-name">{describe(row)}</div>
-        <div className="tk-sub">
-          <span className={`tk-seg ${kind}`}>{segLabel(row.segment)}</span>
-          {row.expiry && <span>{fmtExpiry(row.expiry)}</span>}
-          {kind === 'fno' && <span>Lot {row.lotSize}</span>}
-          {kind !== 'fno' && row.name && row.name !== row.symbol && <span className="tk-full">{row.name}</span>}
-        </div>
-      </td>
-      <td className="num mono tk-ltp">
-        <span key={flash.n} className={`tk-flash ${flash.dir}`}>{q ? P(q.ltp) : <span className="muted-dash">…</span>}</span>
-      </td>
-      <td className={`num mono ${tone}`}>{q?.change != null ? signed.format(q.change) : <span className="muted-dash">—</span>}</td>
-      <td className="num">
-        {q?.changePct != null ? <span className={`tk-pct ${tone}`}>{signed.format(q.changePct)}%</span> : <span className="muted-dash">—</span>}
-      </td>
-      <td className="num mono tk-bidask" title={q?.bidQty ? `Qty ${q.bidQty}` : undefined}>{P(q?.bid)}</td>
-      <td className="num mono tk-bidask" title={q?.askQty ? `Qty ${q.askQty}` : undefined}>{P(q?.ask)}</td>
-      <td className="num mono">{P(q?.open)}</td>
-      <td className="num mono">{P(q?.high)}</td>
-      <td className="num mono">{P(q?.low)}</td>
-      <td className="num mono muted-cell">{P(q?.prevClose)}</td>
-      <td className="num mono" title={q?.volume ? q.volume.toLocaleString('en-IN') : undefined}>
-        {q?.volume ? compact.format(q.volume) : <span className="muted-dash">—</span>}
-      </td>
-      {showOI && (
-        <td className="num mono" title={q?.oi ? q.oi.toLocaleString('en-IN') : undefined}>
-          {kind === 'fno' && q?.oi ? compact.format(q.oi) : <span className="muted-dash">—</span>}
+    <>
+      <tr className={ticket ? 'tk-has-ticket' : ''}>
+        <td className="tk-inst">
+          <div className="tk-name">{describe(row)}</div>
+          <div className="tk-sub">
+            <span className={`tk-seg ${kind}`}>{segLabel(row.segment)}</span>
+            {row.expiry && <span>{fmtExpiry(row.expiry)}</span>}
+            {kind === 'fno' && <span>Lot {row.lotSize}</span>}
+            {kind !== 'fno' && row.name && row.name !== row.symbol && <span className="tk-full">{row.name}</span>}
+          </div>
         </td>
+        <td className="num mono tk-ltp">
+          <span key={flash.n} className={`tk-flash ${flash.dir}`}>{q ? P(q.ltp) : <span className="muted-dash">…</span>}</span>
+        </td>
+        <td className={`num mono ${tone}`}>{q?.change != null ? signed.format(q.change) : <span className="muted-dash">—</span>}</td>
+        <td className="num">
+          {q?.changePct != null ? <span className={`tk-pct ${tone}`}>{signed.format(q.changePct)}%</span> : <span className="muted-dash">—</span>}
+        </td>
+        <td className="num mono" title={q?.volume ? q.volume.toLocaleString('en-IN') : undefined}>
+          {q?.volume ? compact.format(q.volume) : <span className="muted-dash">—</span>}
+        </td>
+        {showOI && (
+          <td className="num mono" title={q?.oi ? q.oi.toLocaleString('en-IN') : undefined}>
+            {kind === 'fno' && q?.oi ? compact.format(q.oi) : <span className="muted-dash">—</span>}
+          </td>
+        )}
+        <td className="num mono">
+          {pos?.qty ? (
+            <span className="tk-posq">
+              <b className={pos.qty > 0 ? 'long' : 'short'}>{pos.qty > 0 ? `+${pos.qty}` : pos.qty}</b>
+              <span className="muted-cell"> @ {price.format(pos.avg)}</span>
+            </span>
+          ) : (
+            <span className="muted-dash">—</span>
+          )}
+        </td>
+        <td className={`num mono ${row.openPnl > 0 ? 'pos' : row.openPnl < 0 ? 'neg' : ''}`}>
+          {row.openPnl != null ? signed.format(row.openPnl) : <span className="muted-dash">—</span>}
+        </td>
+        <td className="tk-trade">
+          {tradable ? (
+            <span className="tk-bs">
+              <button className={`bs buy ${ticket === 'BUY' ? 'on' : ''}`} onClick={() => onTicket('BUY')} aria-expanded={ticket === 'BUY'}>Buy</button>
+              <button className={`bs sell ${ticket === 'SELL' ? 'on' : ''}`} onClick={() => onTicket('SELL')} aria-expanded={ticket === 'SELL'}>Sell</button>
+            </span>
+          ) : (
+            <span className="muted-dash" title="Indices can't be traded">—</span>
+          )}
+        </td>
+        <td className="tk-x">
+          <button className="icon-btn" onClick={onRemove} disabled={busy} aria-label={`Remove ${describe(row)}`} title="Remove">
+            ×
+          </button>
+        </td>
+      </tr>
+      {ticket && (
+        <tr className="tk-ticket-row">
+          <td colSpan={colCount}>
+            <TradeTicket row={row} initialSide={ticket} onPlace={onPlace} onClose={onCloseTicket} pct={brokeragePct} account={account} />
+          </td>
+        </tr>
       )}
-      <td className="mono muted-cell tk-time">{fmtTime(q?.lastTradeTime)}</td>
-      <td className="tk-x">
-        <button className="icon-btn" onClick={onRemove} disabled={busy} aria-label={`Remove ${describe(row)}`} title="Remove">
-          ×
-        </button>
-      </td>
-    </tr>
+    </>
+  );
+}
+
+function TradeTicket({ row, initialSide, onPlace, onClose, pct, account }) {
+  const fno = kindOf(row.segment) === 'fno';
+  const lot = Number(row.lotSize) || 1;
+  const [side, setSide] = useState(initialSide);
+  const [units, setUnits] = useState('1'); // lots for F&O, shares for equity
+  const [status, setStatus] = useState(null);
+  useEffect(() => setSide(initialSide), [initialSide]);
+
+  const n = Math.max(0, Math.floor(Number(units) || 0));
+  const qty = fno ? n * lot : n;
+  const ltp = row.q?.ltp;
+  const pos = row.pos;
+  const busy = status?.kind === 'busy';
+
+  // Funds check (the server checks again at the fill price).
+  const held = pos?.qty || 0;
+  const signedQty = side === 'BUY' ? qty : -qty;
+  const closing = held && Math.sign(held) !== Math.sign(signedQty) ? Math.min(qty, Math.abs(held)) : 0;
+  const opening = qty - closing;
+  const need = ltp != null ? opening * ltp + (qty * ltp * pct) / 100 : null;
+  const released = closing && ltp != null ? closing * pos.avg + closing * (ltp - pos.avg) * Math.sign(held) : 0;
+  const canAfford = !account || need == null || opening === 0 || need <= account.available + released;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!qty) return;
+    setStatus({ kind: 'busy', text: 'Placing…' });
+    try {
+      const t = await onPlace(side, qty);
+      setStatus({
+        kind: 'ok',
+        text: `${t.side === 'BUY' ? 'Bought' : 'Sold'} ${t.qty} @ ${price.format(t.price)} · brokerage ₹${price.format(t.charges)}${t.marketOpen ? '' : ' (market closed — last price)'}`,
+      });
+    } catch (err) {
+      setStatus({ kind: 'err', text: err.message });
+    }
+  };
+
+  return (
+    <form className={`tk-ticket ${side === 'BUY' ? 'is-buy' : 'is-sell'}`} onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+      <div className="seg tk-side" role="group" aria-label="Side">
+        <button type="button" className={side === 'BUY' ? 'on buy' : ''} onClick={() => setSide('BUY')}>Buy</button>
+        <button type="button" className={side === 'SELL' ? 'on sell' : ''} onClick={() => setSide('SELL')}>Sell</button>
+      </div>
+      <label className="tk-qty">
+        {fno ? 'Lots' : 'Qty'}
+        <input type="number" min="1" step="1" value={units} onChange={(e) => (setUnits(e.target.value), setStatus(null))} autoFocus />
+      </label>
+      <span className="tk-ticket-info">
+        {fno && <>= {qty.toLocaleString('en-IN')} qty · </>}
+        Market ≈ {ltp != null ? price.format(ltp) : '…'}
+        {ltp != null && qty > 0 && (
+          <>
+            {' '}· Value ≈ ₹{price.format(ltp * qty)} · Brokerage ≈ ₹{price.format((ltp * qty * pct) / 100)} ({pct}%)
+          </>
+        )}
+        {pos?.qty ? <> · Holding {pos.qty > 0 ? `+${pos.qty}` : pos.qty} @ {price.format(pos.avg)}</> : null}
+        {account && <> · Available ₹{price.format(account.available)}</>}
+      </span>
+      {!canAfford && <span className="status err">Not enough funds: needs ₹{price.format(need)}</span>}
+      <button className={`btn ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={busy || !qty || !canAfford}>
+        {side === 'BUY' ? 'Buy' : 'Sell'} {qty ? qty.toLocaleString('en-IN') : ''} at market
+      </button>
+      <button type="button" className="link tk-ticket-close" onClick={onClose}>Close</button>
+      {status && <span className={`status ${status.kind}`}>{status.text}</span>}
+    </form>
+  );
+}
+
+// ------------------------------------------------------------------ positions
+
+function PositionsCard({ book, quotes, onExit }) {
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState(null);
+  const list = (book?.positions || []).map((p) => {
+    const ltp = quotes[p.key]?.ltp ?? null;
+    const open = p.qty && ltp != null ? (ltp - p.avg) * p.qty : p.qty ? null : 0;
+    return { ...p, ltp, open, total: open == null ? null : open + p.realizedToday - p.chargesToday };
+  });
+  const openSum = list.reduce((s, p) => s + (p.open || 0), 0);
+  const bookedToday = book?.totals?.realizedToday ?? 0;
+  const chargesToday = book?.totals?.chargesToday ?? 0;
+  const dayTotal = openSum + bookedToday - chargesToday;
+  const pct = book?.brokeragePct ?? 1;
+  const tone = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
+
+  const exit = async (p) => {
+    setBusy(p.key);
+    setMsg(null);
+    try {
+      const t = await onExit(p);
+      setMsg({ kind: 'ok', text: `Exited ${describe(p)}: ${t.side === 'BUY' ? 'bought' : 'sold'} ${t.qty} @ ${price.format(t.price)} · brokerage ₹${price.format(t.charges)}` });
+    } catch (e) {
+      setMsg({ kind: 'err', text: e.message });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <section className="card tk-positions">
+      <div className="card-head">
+        <h2>Paper positions</h2>
+        <div className="tk-pos-sum">
+          <span>Booked <b className={`mono ${tone(bookedToday)}`}>{signed.format(bookedToday)}</b></span>
+          <span>Open <b className={`mono ${tone(openSum)}`}>{signed.format(openSum)}</b></span>
+          <span>Brokerage <b className="mono neg">{chargesToday ? `−${price.format(chargesToday)}` : '0.00'}</b></span>
+          <span className="tk-day-total">Today's net P&amp;L <b className={`mono ${tone(dayTotal)}`}>{money(dayTotal)}</b></span>
+          <a className="btn" href="#/pnl">P&amp;L reports →</a>
+        </div>
+      </div>
+      {book?.account && (
+        <div className="tk-funds">
+          <span>Available <b className="mono">₹{price.format(book.account.available)}</b></span>
+          <span>In positions <b className="mono">₹{price.format(book.account.used)}</b></span>
+          <span>Starting amount <b className="mono">₹{price.format(book.account.startingCapital)}</b>{book.account.isDefault && ' (default)'}</span>
+          <a className="link" href="#/pnl">Change or reset amount</a>
+        </div>
+      )}
+      {msg && <p className={`status ${msg.kind} tk-pos-msg`}>{msg.text}</p>}
+      {list.length ? (
+        <div className="table-wrap">
+          <table className="ticker tk-pos-table">
+            <thead>
+              <tr>
+                <th>Instrument</th>
+                <th className="num">Qty</th>
+                <th className="num">Avg price</th>
+                <th className="num">LTP</th>
+                <th className="num">Open P&amp;L</th>
+                <th className="num">Booked today</th>
+                <th className="num">Brokerage today</th>
+                <th className="num">Net today</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((p) => (
+                <tr key={p.key} className={p.qty ? '' : 'tk-closed'}>
+                  <td className="tk-inst">
+                    <div className="tk-name">{describe(p)}</div>
+                    <div className="tk-sub">
+                      <span className={`tk-seg ${kindOf(p.segment)}`}>{segLabel(p.segment)}</span>
+                      {p.expiry && <span>{fmtExpiry(p.expiry)}</span>}
+                      {!p.qty && <span>Closed</span>}
+                    </div>
+                  </td>
+                  <td className="num mono">
+                    {p.qty ? <b className={p.qty > 0 ? 'long' : 'short'}>{p.qty > 0 ? `+${p.qty}` : p.qty}</b> : '0'}
+                  </td>
+                  <td className="num mono">{p.qty ? price.format(p.avg) : <span className="muted-dash">—</span>}</td>
+                  <td className="num mono">{p.ltp != null ? price.format(p.ltp) : <span className="muted-dash">{p.qty ? '…' : '—'}</span>}</td>
+                  <td className={`num mono ${tone(p.open)}`}>{p.qty ? (p.open != null ? signed.format(p.open) : '…') : <span className="muted-dash">—</span>}</td>
+                  <td className={`num mono ${tone(p.realizedToday)}`}>{signed.format(p.realizedToday)}</td>
+                  <td className="num mono muted-cell">{p.chargesToday ? `−${price.format(p.chargesToday)}` : '0.00'}</td>
+                  <td className={`num mono ${tone(p.total)}`}>{p.total != null ? <b>{signed.format(p.total)}</b> : '…'}</td>
+                  <td className="tk-x">
+                    {p.qty !== 0 && (
+                      <button className="btn tk-exit" onClick={() => exit(p)} disabled={busy === p.key}>
+                        {busy === p.key ? 'Exiting…' : 'Exit'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="empty">No paper positions yet. Use Buy or Sell on any row above to place a dummy trade at the live price.</div>
+      )}
+      <div className="foot">
+        Brokerage of {pct}% of trade value is charged on every buy and every sell when the trade is placed. Net = booked + open − brokerage.
+      </div>
+    </section>
   );
 }
 
@@ -484,7 +737,14 @@ function AddInstrument({ secret, existing, onAdd, disabled }) {
   }, []);
 
   const choose = async (r) => {
-    if (!r || have.has(r.key)) return;
+    if (!r) return;
+    if (have.has(r.key)) {
+      // Already in the ticker: just close the list.
+      setQ('');
+      setResults([]);
+      setOpen(false);
+      return;
+    }
     if (await onAdd(r.key)) {
       setQ('');
       setResults([]);
@@ -661,8 +921,8 @@ function ConnectionPanel({ secret, conn, onChange, onClose }) {
 
 // ------------------------------------------------------------------ secret gate
 
-function SecretGate({ initial, error, onSubmit }) {
-  const [value, setValue] = useState(initial || '');
+export function SecretGate({ error, notice, onSubmit }) {
+  const [value, setValue] = useState('');
   const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
   return (
@@ -688,6 +948,7 @@ function SecretGate({ initial, error, onSubmit }) {
         <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
         <span>Remember on this device</span>
       </label>
+      {notice && !error && <p className="status err">{notice}</p>}
       {error && <p className="status err">{error}</p>}
     </section>
   );
