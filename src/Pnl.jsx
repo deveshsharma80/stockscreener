@@ -266,7 +266,7 @@ export default function Pnl() {
           onPickDay={view === 'daily' ? (d) => (setDayFilter(d), setShown(PAGE), document.getElementById('pnl-trades')?.scrollIntoView({ behavior: 'smooth' })) : null}
         />
         <div className="foot">
-          Booked P&amp;L by {view === 'daily' ? 'trading day' : 'week, Monday to Sunday'}, Indian time. Net = gross − brokerage ({book.brokeragePct}% of trade value on every buy and sell). Bars and cumulative use net.
+          Booked P&amp;L by {view === 'daily' ? 'trading day' : 'week, Monday to Sunday'}, Indian time. Net = gross − brokerage (per buy and per sell: Options Buying {book.products?.OPT_BUY?.brokeragePct ?? 1}%, Equity Intraday {book.products?.EQ_INTRADAY?.brokeragePct ?? 0.025}% of trade value). Bars and cumulative use net.
           {open.length > 0 && ' Open positions are shown separately for the current period.'}
         </div>
       </section>

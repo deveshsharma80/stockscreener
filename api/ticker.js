@@ -4,6 +4,7 @@
 // GET  ?action=watchlist              saved instruments
 // GET  ?action=search&q=nifty 25000 ce
 // GET  ?action=quotes&keys=NSE_EQ:2885,NSE_FNO:49081
+// GET  ?action=candles&key=NSE_EQ:2885&days=5       1-minute candles (page builds 3m / 5m)
 // POST {action:"connect", accessToken, clientId?}   save + verify Dhan token
 // POST {action:"renew"}                              renew Dhan token now
 // POST {action:"disconnect"}
@@ -27,6 +28,7 @@ import {
   connectToken,
   getCredentials,
   getFillQuote,
+  getIntradayCandles,
   getQuotes,
   lookupInstrument,
   marketStatus,
@@ -62,6 +64,17 @@ export default async function handler(req, res) {
         const q = String(req.query?.q || '').slice(0, 80);
         const results = q.trim().length < 2 ? [] : await searchInstruments(q, { limit: 25 });
         return res.json({ ok: true, results });
+      }
+      case 'GET candles': {
+        const key = String(req.query?.key || '');
+        if (!KEY_RE.test(key)) throw new HttpError(400, 'Unknown instrument');
+        const days = Math.min(Math.max(parseInt(req.query?.days, 10) || 5, 1), 30);
+        const inst =
+          (await readTable(WATCHLIST)).find((r) => r.key === key) ||
+          (await readTrades()).findLast((t) => t.key === key) ||
+          (await lookupInstrument(key));
+        if (!inst) throw new HttpError(404, `${key} is not a known instrument`);
+        return res.json({ ok: true, key, candles: await getIntradayCandles(inst, { days }), market: marketStatus() });
       }
       case 'GET quotes':
         return res.json({ ok: true, ...(await quotes(req.query?.keys)), market: marketStatus(), at: new Date().toISOString() });

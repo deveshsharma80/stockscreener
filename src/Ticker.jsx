@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+// The chart library is only downloaded when a chart is opened.
+const Chart = lazy(() => import('./Chart.jsx'));
 
 // Live market table for instruments you pick, fed by Dhan's Quote API through
 // /api/ticker (your Dhan token stays on the server).
@@ -115,6 +118,7 @@ export default function Ticker() {
   const [pageError, setPageError] = useState('');
   const [book, setBook] = useState(null); // paper trading: positions, trades, reports
   const [ticket, setTicket] = useState(null); // { key, side } — open Buy/Sell ticket
+  const [chartKey, setChartKey] = useState(null); // instrument whose candle chart is open
 
   // Initial load: check secret, Dhan connection, the saved list and paper book.
   const loadAll = useCallback(async (s) => {
@@ -410,6 +414,11 @@ export default function Ticker() {
                   account={book?.account}
                   products={book?.products}
                   onRemove={() => remove(r.key)}
+                  chartOpen={chartKey === r.key}
+                  onChart={() => {
+                    setChartKey((k) => (k === r.key ? null : r.key));
+                    setTimeout(() => document.querySelector('.tk-chart')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 150);
+                  }}
                 />
               ))}
             </tbody>
@@ -426,6 +435,19 @@ export default function Ticker() {
         </div>
       </section>
 
+      {chartKey && (rows.find((r) => r.key === chartKey) || positions.find((p) => p.key === chartKey)) && (
+        <Suspense fallback={<p className="tk-note">Loading chart…</p>}>
+          <Chart
+            key={chartKey}
+            secret={secret}
+            row={rows.find((r) => r.key === chartKey) || positions.find((p) => p.key === chartKey)}
+            quote={quotes[chartKey]}
+            marketOpen={Boolean(market?.open)}
+            onClose={() => setChartKey(null)}
+          />
+        </Suspense>
+      )}
+
       <PositionsCard book={book} quotes={quotes} onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))} />
     </>
   );
@@ -433,7 +455,7 @@ export default function Ticker() {
 
 // ------------------------------------------------------------------ row with tick flash + trade ticket
 
-function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicket, onPlace, onRemove, brokeragePct, account, products }) {
+function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicket, onPlace, onRemove, brokeragePct, account, products, chartOpen, onChart }) {
   const q = row.q;
   const prev = useRef(null);
   const [flash, setFlash] = useState({ dir: '', n: 0 });
@@ -502,9 +524,25 @@ function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicke
           )}
         </td>
         <td className="tk-x">
-          <button className="icon-btn" onClick={onRemove} disabled={busy} aria-label={`Remove ${describe(row)}`} title="Remove">
-            ×
-          </button>
+          <span className="tk-row-actions">
+            <button
+              className={`icon-btn tk-chart-btn ${chartOpen ? 'on' : ''}`}
+              onClick={onChart}
+              aria-label={`${chartOpen ? 'Hide' : 'Show'} candle chart for ${describe(row)}`}
+              aria-pressed={chartOpen}
+              title="Candle chart (3 / 5 min)"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M4 2v2M4 11v3M12 1v3M12 10v4M8 4v2M8 12v2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                <rect x="2.5" y="4" width="3" height="7" rx="0.8" fill="currentColor" />
+                <rect x="6.5" y="6" width="3" height="6" rx="0.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
+                <rect x="10.5" y="4" width="3" height="6" rx="0.8" fill="currentColor" />
+              </svg>
+            </button>
+            <button className="icon-btn" onClick={onRemove} disabled={busy} aria-label={`Remove ${describe(row)}`} title="Remove">
+              ×
+            </button>
+          </span>
         </td>
       </tr>
       {ticket && (
@@ -524,6 +562,7 @@ function TradeTicket({ row, initialSide, onPlace, onClose, pct, account, product
   const [product, setProduct] = useState(allowed);
   const lev = (p) => products?.[p]?.leverage ?? (p === 'EQ_INTRADAY' ? 4 : 1);
   const L = lev(product);
+  pct = products?.[product]?.brokeragePct ?? pct; // brokerage depends on the trade type
   const lot = Number(row.lotSize) || 1;
   const [side, setSide] = useState(initialSide);
   const [units, setUnits] = useState('1'); // lots for F&O, shares for equity
@@ -637,7 +676,8 @@ function PositionsCard({ book, quotes, onExit }) {
   const bookedToday = book?.totals?.realizedToday ?? 0;
   const chargesToday = book?.totals?.chargesToday ?? 0;
   const dayTotal = openSum + bookedToday - chargesToday;
-  const pct = book?.brokeragePct ?? 1;
+  const rate = (k, fallback) => book?.products?.[k]?.brokeragePct ?? fallback;
+  const pctText = `Options Buying ${rate('OPT_BUY', 1)}% and Equity Intraday ${rate('EQ_INTRADAY', 0.025)}% of trade value`;
   const tone = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
 
   const exit = async (p) => {
@@ -731,7 +771,7 @@ function PositionsCard({ book, quotes, onExit }) {
         <div className="empty">No paper positions yet. Use Buy or Sell on any row above to place a dummy trade at the live price.</div>
       )}
       <div className="foot">
-        Brokerage of {pct}% of trade value is charged on every buy and every sell when the trade is placed. Net = booked + open − brokerage.
+        Brokerage per buy and per sell: {pctText}, charged when the trade is placed. Net = booked + open − brokerage.
       </div>
     </section>
   );
