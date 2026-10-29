@@ -55,3 +55,38 @@ export function applyTick(candles, { time, price, volDelta = 0 }, minutes) {
   candles.push(c);
   return c;
 }
+
+/**
+ * Exponential moving average of candle closes. Seeded with the simple average
+ * of the first `period` closes (the usual convention); earlier points are null.
+ */
+export function ema(candles, period) {
+  const out = new Array(candles.length).fill(null);
+  if (period < 1 || candles.length < period) return out;
+  const k = 2 / (period + 1);
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += candles[i].close;
+  let prev = sum / period;
+  out[period - 1] = prev;
+  for (let i = period; i < candles.length; i++) {
+    prev = candles[i].close * k + prev * (1 - k);
+    out[i] = prev;
+  }
+  return out;
+}
+
+/**
+ * Crossovers between a fast and slow EMA: [{ index, time, type: 'bull'|'bear' }].
+ * Bull = fast crosses above slow; Bear = fast crosses below slow.
+ * Only candles before `upTo` are considered (exclude the still-forming candle).
+ */
+export function crossovers(candles, fast, slow, upTo = candles.length) {
+  const out = [];
+  for (let i = 1; i < upTo; i++) {
+    const f0 = fast[i - 1], s0 = slow[i - 1], f1 = fast[i], s1 = slow[i];
+    if (f0 == null || s0 == null || f1 == null || s1 == null) continue;
+    if (f0 <= s0 && f1 > s1) out.push({ index: i, time: candles[i].time, type: 'bull' });
+    else if (f0 >= s0 && f1 < s1) out.push({ index: i, time: candles[i].time, type: 'bear' });
+  }
+  return out;
+}

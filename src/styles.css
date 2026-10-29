@@ -492,3 +492,19 @@ table.pnl-bytype tr.pnl-total-row td:first-child { background: var(--surface-2);
 .tk-chart-box { height: 440px; margin: 6px 6px 0; position: relative; }
 .tk-chart-err { margin: 6px 16px; }
 @media (max-width: 560px) { .tk-chart-box { height: 320px; } }
+.tk-chart-credit { display: block; margin-top: 2px; font-size: 12px; }
+.tk-chart-credit a { color: inherit; }
+
+/* EMA crossover */
+:root { --ema-fast: #1d4ed8; --ema-slow: #a21caf; }
+@media (prefers-color-scheme: dark) { :root { --ema-fast: #3b82f6; --ema-slow: #c026d3; } }
+.tk-ema-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 16px 0; font-size: 13px; color: var(--muted); }
+.tk-ema-in { display: inline-flex; align-items: center; gap: 6px; }
+.tk-ema-in input { width: 64px; font: inherit; font-size: 13px; padding: 4px 6px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.tk-ema-in input:disabled { opacity: 0.5; }
+.tk-ema-state { color: var(--text); }
+.tk-ema-state b.pos { color: var(--pos); }
+.tk-ema-state b.neg { color: var(--neg); }
+.ema-swatch { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
+.ema-swatch.fast { border-color: var(--ema-fast); }
+.ema-swatch.slow { border-color: var(--ema-slow); border-top-style: dashed; }
