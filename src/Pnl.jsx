@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { SECRET_KEY, SecretGate, api, describe, fmtExpiry, kindOf, money, price, segLabel, signed, store } from './Ticker.jsx';
+import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, fmtExpiry, kindOf, money, price, segLabel, signed, store } from './Ticker.jsx';
 
 // Paper-trading P&L reports: daily and weekly booked P&L, plus live open P&L.
 
@@ -24,6 +24,7 @@ export default function Pnl() {
   const [book, setBook] = useState(null);
   const [quotes, setQuotes] = useState({});
   const [view, setView] = useState('daily');
+  const [type, setType] = useState('ALL'); // ALL | OPT_BUY | EQ_INTRADAY | OTHER
   const [dayFilter, setDayFilter] = useState('');
   const [shown, setShown] = useState(PAGE);
   const [resetStep, setResetStep] = useState(0);
@@ -91,14 +92,24 @@ export default function Pnl() {
     );
   }
 
-  const t = book.totals;
-  const open = (book.positions || []).filter((p) => p.qty);
-  const openPnl = open.reduce((s, p) => (quotes[p.key]?.ltp != null ? s + (quotes[p.key].ltp - p.avg) * p.qty : s), 0);
+  // Reports for the chosen trade type (falls back to combined for older servers)
+  const reports = book.reports || { ALL: { daily: book.daily, weekly: book.weekly, totals: book.totals } };
+  const types = ['ALL', 'OPT_BUY', 'EQ_INTRADAY', ...(reports.OTHER ? ['OTHER'] : [])];
+  const sel = reports[type] || reports.ALL;
+  const empty = { daily: [], weekly: [], totals: { ...reports.ALL.totals, realizedToday: 0, chargesToday: 0, netToday: 0, realizedWeek: 0, chargesWeek: 0, netWeek: 0, realizedAll: 0, chargesAll: 0, netAll: 0, trades: 0, wins: 0, losses: 0 } };
+  const R = reports[type] ? sel : empty;
+  const t = R.totals;
+  const inType = (x) => type === 'ALL' || x.product === type;
+  const openPnlOf = (list) => list.reduce((s, p) => (quotes[p.key]?.ltp != null ? s + (quotes[p.key].ltp - p.avg) * p.qty : s), 0);
+  const openAll = (book.positions || []).filter((p) => p.qty);
+  const open = openAll.filter(inType);
+  const openPnl = openPnlOf(open);
+  const openPnlAll = openPnlOf(openAll);
   const openKnown = open.every((p) => quotes[p.key]?.ltp != null);
   const closes = t.wins + t.losses;
 
   const acct = book.account;
-  const accountValue = acct.startingCapital + acct.netBooked + openPnl;
+  const accountValue = acct.startingCapital + acct.netBooked + openPnlAll;
   const returnPct = ((accountValue - acct.startingCapital) / acct.startingCapital) * 100;
   const amountNum = Number(String(amount).replace(/[,₹\s]/g, ''));
 
@@ -130,18 +141,18 @@ export default function Pnl() {
     }
   };
 
-  const trades = dayFilter ? book.trades.filter((x) => x.date === dayFilter) : book.trades;
+  const trades = book.trades.filter((x) => inType(x) && (!dayFilter || x.date === dayFilter));
 
   const exportCsv = () => {
-    const head = ['Time (IST)', 'Instrument', 'Segment', 'Expiry', 'Side', 'Qty', 'Price', 'Value', 'Brokerage', 'Gross P&L', 'Net P&L'];
+    const head = ['Time (IST)', 'Trade type', 'Instrument', 'Segment', 'Expiry', 'Side', 'Qty', 'Price', 'Value', 'Brokerage', 'Gross P&L', 'Net P&L'];
     const esc = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
     const lines = trades.map((x) =>
-      [timeFmt.format(new Date(x.at)), describe(x), x.segment, x.expiry || '', x.side, x.qty, x.price, (x.qty * x.price).toFixed(2), x.charges, x.realized, x.net].map(esc).join(',')
+      [timeFmt.format(new Date(x.at)), PRODUCT_LABEL[x.product] || x.product, describe(x), x.segment, x.expiry || '', x.side, x.qty, x.price, (x.qty * x.price).toFixed(2), x.charges, x.realized, x.net].map(esc).join(',')
     );
     const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `paper-trades${dayFilter ? `-${dayFilter}` : ''}.csv`;
+    a.download = `paper-trades${type !== 'ALL' ? `-${type.toLowerCase()}` : ''}${dayFilter ? `-${dayFilter}` : ''}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
@@ -166,7 +177,8 @@ export default function Pnl() {
           </div>
           <div><dt>Return</dt><dd className={`mono ${tone(returnPct)}`}>{signed.format(returnPct)}%</dd></div>
           <div><dt>Available to trade</dt><dd className="mono">₹{price.format(acct.available)}</dd></div>
-          <div><dt>In open positions</dt><dd className="mono">₹{price.format(acct.used)}</dd></div>
+          <div><dt>Margin used</dt><dd className="mono">₹{price.format(acct.used)}</dd></div>
+          {acct.buyingPower && <div><dt>Intraday buying power</dt><dd className="mono">₹{price.format(acct.buyingPower.EQ_INTRADAY)}</dd></div>}
         </dl>
         {mode === 'edit' && (
           <form className="tk-conn-form pnl-acct-form" onSubmit={saveAmount}>
@@ -201,13 +213,24 @@ export default function Pnl() {
         )}
         {acctMsg && <p className={`status ${acctMsg.kind}`}>{acctMsg.text}</p>}
         <p className="muted small pnl-acct-note">
-          Available = starting amount + net booked P&amp;L − value of open positions. Each open position uses its full value (no leverage or margin).
+          Available = starting amount + net booked P&amp;L − margin used. Options Buying uses the full premium; Equity Intraday uses ¼ of the position value ({book.products?.EQ_INTRADAY?.leverage ?? 4}× leverage), so intraday buying power is {book.products?.EQ_INTRADAY?.leverage ?? 4}× your available funds.
         </p>
       </section>
 
+      <div className="pnl-typebar">
+        <span className="flabel">Trade type</span>
+        <div className="seg" role="group" aria-label="Trade type">
+          {types.map((k) => (
+            <button key={k} className={type === k ? 'on' : ''} onClick={() => (setType(k), setDayFilter(''), setShown(PAGE))}>
+              {k === 'ALL' ? 'All' : PRODUCT_LABEL[k]}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <section className="stats pnl-tiles">
         <Tile
-          label="Today's net P&L"
+          label={`Today's net P&L${type === 'ALL' ? '' : ` · ${PRODUCT_LABEL[type]}`}`}
           value={t.netToday + openPnl}
           note={`Gross ${signed.format(t.realizedToday)} · brokerage −${price.format(t.chargesToday)}${open.length ? ` · open ${openKnown ? signed.format(openPnl) : '…'}` : ''}`}
         />
@@ -224,16 +247,18 @@ export default function Pnl() {
         </div>
       </section>
 
+      <ByType reports={reports} openPnlFor={(k) => openPnlOf(openAll.filter((p) => k === 'ALL' || p.product === k))} selected={type} onPick={(k) => (setType(k), setDayFilter(''), setShown(PAGE))} />
+
       <section className="card">
         <div className="card-head">
-          <h2>P&amp;L report</h2>
+          <h2>P&amp;L report{type !== 'ALL' && <span className="pnl-type-tag">{PRODUCT_LABEL[type]}</span>}</h2>
           <div className="seg" role="group" aria-label="Report">
             <button className={view === 'daily' ? 'on' : ''} onClick={() => setView('daily')}>Daily</button>
             <button className={view === 'weekly' ? 'on' : ''} onClick={() => setView('weekly')}>Weekly</button>
           </div>
         </div>
         <ReportTable
-          rows={view === 'daily' ? book.daily : book.weekly}
+          rows={view === 'daily' ? R.daily : R.weekly}
           labelKey={view === 'daily' ? 'date' : 'weekOf'}
           label={view === 'daily' ? dateLabel : weekLabel}
           current={view === 'daily' ? book.today : t.thisWeek}
@@ -251,7 +276,7 @@ export default function Pnl() {
           <h2 className="pnl-h">Trades</h2>
           <select className="select" value={dayFilter} onChange={(e) => (setDayFilter(e.target.value), setShown(PAGE))} aria-label="Day">
             <option value="">All days</option>
-            {book.daily.map((d) => <option key={d.date} value={d.date}>{dateLabel(d.date)}</option>)}
+            {R.daily.map((d) => <option key={d.date} value={d.date}>{dateLabel(d.date)}</option>)}
           </select>
           <button className="btn push" onClick={exportCsv} disabled={!trades.length}>Export CSV</button>
         </div>
@@ -261,6 +286,7 @@ export default function Pnl() {
               <tr>
                 <th>Time</th>
                 <th>Instrument</th>
+                <th>Type</th>
                 <th>Side</th>
                 <th className="num">Qty</th>
                 <th className="num">Price</th>
@@ -282,6 +308,7 @@ export default function Pnl() {
                       {!x.marketOpen && <span title="Placed while the market was closed">after hours</span>}
                     </div>
                   </td>
+                  <td><span className={`tk-prod ${x.product}`}>{PRODUCT_SHORT[x.product] || x.product}</span></td>
                   <td><span className={`side-pill ${x.side === 'BUY' ? 'buy' : 'sell'}`}>{x.side}</span></td>
                   <td className="num mono">{x.qty.toLocaleString('en-IN')}</td>
                   <td className="num mono">{price.format(x.price)}</td>
@@ -395,5 +422,53 @@ function ReportTable({ rows, labelKey, label, current, openPnl, onPickDay }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+// Side-by-side summary of each trade type (always shows all types).
+function ByType({ reports, openPnlFor, selected, onPick }) {
+  const keys = ['OPT_BUY', 'EQ_INTRADAY', ...(reports.OTHER ? ['OTHER'] : []), 'ALL'];
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2>By trade type</h2>
+        <span className="muted small">Net = after brokerage. Click a row to filter the page.</span>
+      </div>
+      <div className="table-wrap">
+        <table className="ticker pnl-bytype">
+          <thead>
+            <tr>
+              <th>Trade type</th>
+              <th className="num">Trades</th>
+              <th className="num">Today (net)</th>
+              <th className="num">Open P&amp;L</th>
+              <th className="num">This week (net)</th>
+              <th className="num">All-time (net)</th>
+              <th className="num">Brokerage paid</th>
+              <th className="num">Win rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {keys.map((k) => {
+              const t = reports[k]?.totals;
+              const open = openPnlFor(k);
+              const closes = t ? t.wins + t.losses : 0;
+              return (
+                <tr key={k} className={`clickable ${selected === k ? 'open' : ''} ${k === 'ALL' ? 'pnl-total-row' : ''}`} onClick={() => onPick(k)}>
+                  <td>{k === 'ALL' ? <b>All types</b> : <span className={`tk-prod ${k}`}>{PRODUCT_LABEL[k]}</span>}</td>
+                  <td className="num mono">{t ? t.trades : 0}</td>
+                  <td className={`num mono ${tone(t?.netToday)}`}>{signed.format(t?.netToday ?? 0)}</td>
+                  <td className={`num mono ${tone(open)}`}>{signed.format(open)}</td>
+                  <td className={`num mono ${tone(t?.netWeek)}`}>{signed.format(t?.netWeek ?? 0)}</td>
+                  <td className={`num mono ${tone(t?.netAll)}`}><b>{signed.format(t?.netAll ?? 0)}</b></td>
+                  <td className="num mono muted-cell">{t ? `−${price.format(t.chargesAll)}` : '0.00'}</td>
+                  <td className="num mono">{closes ? `${Math.round((t.wins / closes) * 100)}% (${t.wins}/${closes})` : '—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

@@ -59,6 +59,12 @@ export const fmtExpiry = (e) => {
   const [y, m, d] = e.split('-');
   return `${Number(d)} ${MONTHS[Number(m) - 1]} ${y.slice(2)}`;
 };
+// Paper trade types (mirrors lib/paper.js)
+export const PRODUCT_LABEL = { OPT_BUY: 'Options Buying', EQ_INTRADAY: 'Equity Intraday', OTHER: 'Other' };
+export const PRODUCT_SHORT = { OPT_BUY: 'OPT BUY', EQ_INTRADAY: 'INTRADAY', OTHER: 'OTHER' };
+export const productFor = (r) =>
+  String(r.instrument || '').startsWith('OPT') ? 'OPT_BUY' : r.segment === 'NSE_EQ' || r.segment === 'BSE_EQ' ? 'EQ_INTRADAY' : null;
+
 export function describe(row) {
   if (row.instrument?.startsWith('OPT')) return `${row.underlying || row.symbol.split('-')[0]} ${row.strike} ${row.optionType}`;
   if (row.instrument?.startsWith('FUT')) return `${row.underlying || row.symbol.split('-')[0]} FUT`;
@@ -219,8 +225,8 @@ export default function Ticker() {
   };
 
   // ---- paper trades (filled server-side at the live LTP)
-  const placeTrade = async (key, side, qty) => {
-    const j = await api(secret, 'trade', { method: 'POST', body: { key, side, qty } });
+  const placeTrade = async (key, side, qty, product) => {
+    const j = await api(secret, 'trade', { method: 'POST', body: { key, side, qty, product } });
     setBook(j);
     return j.trade;
   };
@@ -399,9 +405,10 @@ export default function Ticker() {
                   ticket={ticket?.key === r.key ? ticket.side : null}
                   onTicket={(side) => openTicket(r.key, side)}
                   onCloseTicket={() => setTicket(null)}
-                  onPlace={(side, qty) => placeTrade(r.key, side, qty)}
+                  onPlace={(side, qty, product) => placeTrade(r.key, side, qty, product)}
                   brokeragePct={book?.brokeragePct ?? 1}
                   account={book?.account}
+                  products={book?.products}
                   onRemove={() => remove(r.key)}
                 />
               ))}
@@ -426,7 +433,7 @@ export default function Ticker() {
 
 // ------------------------------------------------------------------ row with tick flash + trade ticket
 
-function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicket, onPlace, onRemove, brokeragePct, account }) {
+function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicket, onPlace, onRemove, brokeragePct, account, products }) {
   const q = row.q;
   const prev = useRef(null);
   const [flash, setFlash] = useState({ dir: '', n: 0 });
@@ -439,7 +446,8 @@ function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicke
 
   const tone = q?.change > 0 ? 'pos' : q?.change < 0 ? 'neg' : '';
   const kind = kindOf(row.segment);
-  const tradable = kind !== 'idx';
+  const product = productFor(row);
+  const tradable = Boolean(product);
   const P = (v) => (v == null || (v === 0 && kind !== 'fno') ? <span className="muted-dash">—</span> : price.format(v));
   const pos = row.pos;
 
@@ -490,7 +498,7 @@ function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicke
               <button className={`bs sell ${ticket === 'SELL' ? 'on' : ''}`} onClick={() => onTicket('SELL')} aria-expanded={ticket === 'SELL'}>Sell</button>
             </span>
           ) : (
-            <span className="muted-dash" title="Indices can't be traded">—</span>
+            <span className="muted-dash" title={kind === 'idx' ? "Indices can't be traded" : 'Paper trading supports Options Buying and Equity Intraday only'}>—</span>
           )}
         </td>
         <td className="tk-x">
@@ -502,7 +510,7 @@ function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicke
       {ticket && (
         <tr className="tk-ticket-row">
           <td colSpan={colCount}>
-            <TradeTicket row={row} initialSide={ticket} onPlace={onPlace} onClose={onCloseTicket} pct={brokeragePct} account={account} />
+            <TradeTicket row={row} initialSide={ticket} onPlace={onPlace} onClose={onCloseTicket} pct={brokeragePct} account={account} products={products} />
           </td>
         </tr>
       )}
@@ -510,8 +518,12 @@ function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicke
   );
 }
 
-function TradeTicket({ row, initialSide, onPlace, onClose, pct, account }) {
+function TradeTicket({ row, initialSide, onPlace, onClose, pct, account, products }) {
   const fno = kindOf(row.segment) === 'fno';
+  const allowed = productFor(row); // each instrument has exactly one valid trade type
+  const [product, setProduct] = useState(allowed);
+  const lev = (p) => products?.[p]?.leverage ?? (p === 'EQ_INTRADAY' ? 4 : 1);
+  const L = lev(product);
   const lot = Number(row.lotSize) || 1;
   const [side, setSide] = useState(initialSide);
   const [units, setUnits] = useState('1'); // lots for F&O, shares for equity
@@ -529,16 +541,25 @@ function TradeTicket({ row, initialSide, onPlace, onClose, pct, account }) {
   const signedQty = side === 'BUY' ? qty : -qty;
   const closing = held && Math.sign(held) !== Math.sign(signedQty) ? Math.min(qty, Math.abs(held)) : 0;
   const opening = qty - closing;
-  const need = ltp != null ? opening * ltp + (qty * ltp * pct) / 100 : null;
-  const released = closing && ltp != null ? closing * pos.avg + closing * (ltp - pos.avg) * Math.sign(held) : 0;
+  const need = ltp != null ? (opening * ltp) / L + (qty * ltp * pct) / 100 : null;
+  const released = closing && ltp != null ? (closing * pos.avg) / lev(pos.product) + closing * (ltp - pos.avg) * Math.sign(held) : 0;
   const canAfford = !account || need == null || opening === 0 || need <= account.available + released;
+  // Rules (the server enforces them too)
+  const ruleError =
+    product !== allowed
+      ? `This instrument can only be traded as ${PRODUCT_LABEL[allowed]}.`
+      : product === 'OPT_BUY' && side === 'SELL' && held <= 0
+        ? "Options Buying: you can only sell options you hold — option writing isn't allowed."
+        : product === 'OPT_BUY' && side === 'SELL' && qty > held
+          ? `Options Buying: you hold ${held}; sell at most ${held}.`
+          : '';
 
   const submit = async (e) => {
     e.preventDefault();
     if (!qty) return;
     setStatus({ kind: 'busy', text: 'Placing…' });
     try {
-      const t = await onPlace(side, qty);
+      const t = await onPlace(side, qty, product);
       setStatus({
         kind: 'ok',
         text: `${t.side === 'BUY' ? 'Bought' : 'Sold'} ${t.qty} @ ${price.format(t.price)} · brokerage ₹${price.format(t.charges)}${t.marketOpen ? '' : ' (market closed — last price)'}`,
@@ -550,6 +571,21 @@ function TradeTicket({ row, initialSide, onPlace, onClose, pct, account }) {
 
   return (
     <form className={`tk-ticket ${side === 'BUY' ? 'is-buy' : 'is-sell'}`} onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+      <div className="seg tk-product" role="group" aria-label="Trade type">
+        {['OPT_BUY', 'EQ_INTRADAY'].map((p) => (
+          <button
+            key={p}
+            type="button"
+            className={product === p ? 'on' : ''}
+            onClick={() => setProduct(p)}
+            disabled={p !== allowed}
+            title={p !== allowed ? `Not available for this instrument — it can only be traded as ${PRODUCT_LABEL[allowed]}` : undefined}
+          >
+            {PRODUCT_LABEL[p]}
+            {p === 'EQ_INTRADAY' && <span className="tk-lev">{lev('EQ_INTRADAY')}×</span>}
+          </button>
+        ))}
+      </div>
       <div className="seg tk-side" role="group" aria-label="Side">
         <button type="button" className={side === 'BUY' ? 'on buy' : ''} onClick={() => setSide('BUY')}>Buy</button>
         <button type="button" className={side === 'SELL' ? 'on sell' : ''} onClick={() => setSide('SELL')}>Sell</button>
@@ -563,14 +599,22 @@ function TradeTicket({ row, initialSide, onPlace, onClose, pct, account }) {
         Market ≈ {ltp != null ? price.format(ltp) : '…'}
         {ltp != null && qty > 0 && (
           <>
-            {' '}· Value ≈ ₹{price.format(ltp * qty)} · Brokerage ≈ ₹{price.format((ltp * qty * pct) / 100)} ({pct}%)
+            {' '}· Value ≈ ₹{price.format(ltp * qty)}
+            {L > 1 && opening > 0 && <> · Margin ≈ ₹{price.format((ltp * opening) / L)} ({L}×)</>}
+            {' '}· Brokerage ≈ ₹{price.format((ltp * qty * pct) / 100)} ({pct}%)
           </>
         )}
         {pos?.qty ? <> · Holding {pos.qty > 0 ? `+${pos.qty}` : pos.qty} @ {price.format(pos.avg)}</> : null}
-        {account && <> · Available ₹{price.format(account.available)}</>}
+        {account && (
+          <>
+            {' '}· Available ₹{price.format(account.available)}
+            {L > 1 && <> (buying power ₹{price.format(account.available * L)})</>}
+          </>
+        )}
       </span>
-      {!canAfford && <span className="status err">Not enough funds: needs ₹{price.format(need)}</span>}
-      <button className={`btn ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={busy || !qty || !canAfford}>
+      {ruleError && <span className="status err">{ruleError}</span>}
+      {!ruleError && !canAfford && <span className="status err">Not enough funds: needs ₹{price.format(need)}</span>}
+      <button className={`btn ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={busy || !qty || !canAfford || Boolean(ruleError)}>
         {side === 'BUY' ? 'Buy' : 'Sell'} {qty ? qty.toLocaleString('en-IN') : ''} at market
       </button>
       <button type="button" className="link tk-ticket-close" onClick={onClose}>Close</button>
@@ -624,7 +668,10 @@ function PositionsCard({ book, quotes, onExit }) {
       {book?.account && (
         <div className="tk-funds">
           <span>Available <b className="mono">₹{price.format(book.account.available)}</b></span>
-          <span>In positions <b className="mono">₹{price.format(book.account.used)}</b></span>
+          {book.account.buyingPower && (
+            <span>Intraday buying power <b className="mono">₹{price.format(book.account.buyingPower.EQ_INTRADAY)}</b></span>
+          )}
+          <span>Margin used <b className="mono">₹{price.format(book.account.used)}</b></span>
           <span>Starting amount <b className="mono">₹{price.format(book.account.startingCapital)}</b>{book.account.isDefault && ' (default)'}</span>
           <a className="link" href="#/pnl">Change or reset amount</a>
         </div>
@@ -654,7 +701,9 @@ function PositionsCard({ book, quotes, onExit }) {
                     <div className="tk-sub">
                       <span className={`tk-seg ${kindOf(p.segment)}`}>{segLabel(p.segment)}</span>
                       {p.expiry && <span>{fmtExpiry(p.expiry)}</span>}
+                      <span className={`tk-prod ${p.product}`}>{PRODUCT_SHORT[p.product] || p.product}</span>
                       {!p.qty && <span>Closed</span>}
+                      {p.carried && <span className="tk-carried" title="Intraday positions should be closed the same day">Not squared off</span>}
                     </div>
                   </td>
                   <td className="num mono">

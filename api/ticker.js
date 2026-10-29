@@ -12,12 +12,14 @@
 //
 // Paper trading (dummy fills at the live LTP, stored in db/paper_trades.json):
 // GET  ?action=paper                                  positions, trades, daily/weekly P&L
-// POST {action:"trade", key, side:"BUY"|"SELL", qty}  qty in shares (F&O: multiple of lot size)
+// POST {action:"trade", key, side:"BUY"|"SELL", qty, product}
+//      product: "OPT_BUY" (Options Buying) | "EQ_INTRADAY" (Equity Intraday, 4× leverage)
+//      qty in shares (F&O: multiple of lot size)
 // POST {action:"paper-capital", amount}               set the starting amount (keeps trades)
 // POST {action:"paper-reset", amount?}                delete all paper trades, optionally set a new starting amount
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
-import { addTrade, checkFunds, computeBook, readAccount, readTrades, resetTrades, setCapital } from '../lib/paper.js';
+import { PRODUCTS, addTrade, checkFunds, computeBook, productFor, readAccount, readTrades, resetTrades, setCapital, validateOrder } from '../lib/paper.js';
 import {
   DhanError,
   SEGMENTS,
@@ -191,7 +193,7 @@ async function quotes(keysParam) {
 
 // ------------------------------------------------------------------ paper trading
 
-async function placePaperTrade({ key, side, qty }) {
+async function placePaperTrade({ key, side, qty, product }) {
   key = String(key || '');
   side = String(side || '').toUpperCase();
   qty = Number(qty);
@@ -210,13 +212,25 @@ async function placePaperTrade({ key, side, qty }) {
     throw new HttpError(400, `F&O quantity must be a multiple of the lot size (${lot})`);
   }
 
+  // Trade type: closing an existing position keeps that position's type;
+  // anything that opens or adds must follow the type's rules.
+  const book = await paperBook();
+  const pos = book.positions.find((p) => p.key === key && p.qty !== 0);
+  const closesOnly = pos && (side === 'BUY' ? pos.qty < 0 : pos.qty > 0) && qty <= Math.abs(pos.qty);
+  product = closesOnly ? pos.product : String(product || productFor(inst) || '').toUpperCase();
+  if (!closesOnly) {
+    const problem = validateOrder(book, inst, { key, side, qty, product });
+    if (problem) throw new HttpError(400, problem, { kind: 'rules' });
+  }
+
   const quote = await getFillQuote(inst);
-  const funds = checkFunds(await paperBook(), { key, side, qty, price: quote.ltp });
+  const funds = checkFunds(book, { key, side, qty, price: quote.ltp, product });
   if (!funds.ok) {
     const f = (v) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-    throw new HttpError(400, `Not enough paper funds: this order needs ₹${f(funds.required)} (value + brokerage), available ₹${f(funds.available)}.`, { kind: 'funds' });
+    const what = funds.leverage > 1 ? `margin at ${funds.leverage}× + brokerage` : 'value + brokerage';
+    throw new HttpError(400, `Not enough paper funds for ${PRODUCTS[product].label}: this order needs ₹${f(funds.required)} (${what}), available ₹${f(funds.available)}.`, { kind: 'funds' });
   }
-  return addTrade({ inst, side, qty, price: quote.ltp, marketOpen: marketStatus().open });
+  return addTrade({ inst, side, qty, price: quote.ltp, marketOpen: marketStatus().open, product });
 }
 
 async function paperBook() {
