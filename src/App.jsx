@@ -628,7 +628,7 @@ function DeletePanel({ rows, total, onClose, onDeleted }) {
             </span>
           </div>
         )}
-        <button className="link dp-close" onClick={onClose} aria-label="Close">Close</button>
+        <button className="btn btn-close dp-close" onClick={onClose}>Close</button>
       </div>
 
       <div className="dp-row">

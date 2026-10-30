@@ -34,7 +34,7 @@ const prefersDark = () => typeof window !== 'undefined' && window.matchMedia?.('
 const shift = (c) => ({ ...c, time: c.time + IST_OFFSET }); // the chart shows UTC; shift so axes read IST
 const compactVol = (v) => (v >= 1e7 ? `${(v / 1e7).toFixed(2)}Cr` : v >= 1e5 ? `${(v / 1e5).toFixed(2)}L` : v >= 1e3 ? `${(v / 1e3).toFixed(1)}K` : String(v));
 
-export default function Chart({ secret, row, quote, marketOpen, onClose }) {
+export default function Chart({ secret, row, quote, marketOpen, onClose, position, onExit }) {
   const [minutes, setMinutes] = useState(() => (Number(store.get(INTERVAL_KEY)) === 5 ? 5 : 3));
   const [oneMin, setOneMin] = useState(null);
   const [error, setError] = useState('');
@@ -49,6 +49,7 @@ export default function Chart({ secret, row, quote, marketOpen, onClose }) {
   const [emaCfg, setEmaCfg] = useState(readEma);
   const [emaDraft, setEmaDraft] = useState(() => ({ fast: String(readEma().fast), slow: String(readEma().slow) }));
   const [cross, setCross] = useState({ last: null, count: 0 });
+  const [exitState, setExitState] = useState(null); // { kind: 'busy'|'ok'|'err', text }
   const emaRef = useRef({ fast: [], slow: [], drawnLen: 0 });
   const emaCfgRef = useRef(emaCfg);
   emaCfgRef.current = emaCfg;
@@ -261,12 +262,35 @@ export default function Chart({ secret, row, quote, marketOpen, onClose }) {
           {quote?.ltp != null && <b className="mono tk-chart-ltp">{price.format(quote.ltp)}</b>}
         </div>
         <div className="form-actions">
+          {position && (
+            <span className="tk-chart-pos mono">
+              Holding <b className={position.qty > 0 ? 'long' : 'short'}>{position.qty > 0 ? `+${position.qty}` : position.qty}</b> @ {price.format(position.avg)}
+            </span>
+          )}
+          {position && (
+            <button
+              className="btn danger-outline tk-chart-exit"
+              disabled={exitState?.kind === 'busy'}
+              onClick={async () => {
+                setExitState({ kind: 'busy', text: 'Exiting…' });
+                try {
+                  const t = await onExit(position);
+                  setExitState({ kind: 'ok', text: `Exited: ${t.side === 'BUY' ? 'bought' : 'sold'} ${t.qty} @ ${price.format(t.price)} · brokerage ₹${price.format(t.charges)}` });
+                } catch (e) {
+                  setExitState({ kind: 'err', text: e.message });
+                }
+              }}
+            >
+              {exitState?.kind === 'busy' ? 'Exiting…' : 'Exit position'}
+            </button>
+          )}
+          {exitState && exitState.kind !== 'busy' && <span className={`status ${exitState.kind}`}>{exitState.text}</span>}
           <div className="seg" role="group" aria-label="Candle interval">
             {INTERVALS.map((m) => (
               <button key={m} className={minutes === m ? 'on' : ''} onClick={() => pick(m)}>{m} min</button>
             ))}
           </div>
-          <button className="link dp-close" onClick={onClose}>Close chart</button>
+          <button className="btn btn-close" onClick={onClose}>Close chart</button>
         </div>
       </div>
       <div className="tk-ema-bar">

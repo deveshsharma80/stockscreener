@@ -444,6 +444,8 @@ export default function Ticker() {
             quote={quotes[chartKey]}
             marketOpen={Boolean(market?.open)}
             onClose={() => setChartKey(null)}
+            position={positions.find((p) => p.key === chartKey && p.qty !== 0) || null}
+            onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))}
           />
         </Suspense>
       )}
@@ -656,7 +658,7 @@ function TradeTicket({ row, initialSide, onPlace, onClose, pct, account, product
       <button className={`btn ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={busy || !qty || !canAfford || Boolean(ruleError)}>
         {side === 'BUY' ? 'Buy' : 'Sell'} {qty ? qty.toLocaleString('en-IN') : ''} at market
       </button>
-      <button type="button" className="link tk-ticket-close" onClick={onClose}>Close</button>
+      <button type="button" className="btn btn-close" onClick={onClose}>Close</button>
       {status && <span className={`status ${status.kind}`}>{status.text}</span>}
     </form>
   );
@@ -964,7 +966,7 @@ function ConnectionPanel({ secret, conn, onChange, onClose }) {
     <section className="card pad tk-conn-panel">
       <div className="ck-head">
         <h2>Dhan connection</h2>
-        <button className="link dp-close" onClick={onClose}>Close</button>
+        <button className="btn btn-close dp-close" onClick={onClose}>Close</button>
       </div>
 
       {conn?.connected ? (

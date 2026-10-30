@@ -508,3 +508,14 @@ table.pnl-bytype tr.pnl-total-row td:first-child { background: var(--surface-2);
 .ema-swatch { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
 .ema-swatch.fast { border-color: var(--ema-fast); }
 .ema-swatch.slow { border-color: var(--ema-slow); border-top-style: dashed; }
+
+/* Close buttons: subtle red with white text (white on #dc2626 = 4.8:1 contrast) */
+.btn.btn-close { background: #dc2626; color: #fff; border-color: transparent; font-weight: 600; padding: 5px 12px; font-size: 13px; }
+.btn.btn-close:hover { background: #b91c1c; }
+.btn.btn-close:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }
+
+/* Exit position on the chart bar */
+.tk-chart-pos { font-size: 13px; color: var(--muted); }
+.tk-chart-pos b.long { color: var(--buy); }
+.tk-chart-pos b.short { color: var(--sell); }
+.tk-chart .card-head .status { font-size: 12.5px; }
