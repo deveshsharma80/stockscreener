@@ -619,3 +619,7 @@ a.nav-status:hover { background: var(--surface-2); }
 .shell.nav-collapsed { background: linear-gradient(to right, var(--surface) calc(var(--nav-w-collapsed) - 1px), var(--border) calc(var(--nav-w-collapsed) - 1px), var(--border) var(--nav-w-collapsed), var(--bg) var(--nav-w-collapsed)); }
 .main { background: var(--bg); }
 @media (max-width: 900px) { .shell, .shell.nav-collapsed { background: var(--bg); } }
+
+/* Tables grow with their content: only the page scrolls vertically.
+   (Wide tables can still scroll sideways on small screens.) */
+.table-wrap, .table-wrap.tall { max-height: none; overflow-x: auto; overflow-y: hidden; }
