@@ -10,6 +10,7 @@
 // POST {action:"disconnect"}
 // POST {action:"add", key:"NSE_EQ:2885"}             add to watchlist
 // POST {action:"remove", key:"NSE_EQ:2885"}
+// POST {action:"add-symbol", symbol:"SBIN"}            add a stock by its NSE symbol (from Chartink)
 //
 // Paper trading (dummy fills at the live LTP, stored in db/paper_trades.json):
 // GET  ?action=paper                                  positions, trades, daily/weekly P&L
@@ -30,6 +31,7 @@ import {
   getFillQuote,
   getIntradayCandles,
   getQuotes,
+  findEquityBySymbol,
   lookupInstrument,
   marketStatus,
   profile,
@@ -87,6 +89,13 @@ export default async function handler(req, res) {
       case 'POST disconnect':
         await clearCredentials();
         return res.json({ ok: true, connected: false });
+      case 'POST add-symbol': {
+        const symbol = String(body.symbol || '').trim().toUpperCase();
+        if (!symbol) throw new HttpError(400, 'Which stock? Send a symbol like SBIN');
+        const inst = await findEquityBySymbol(symbol);
+        if (!inst) throw new HttpError(404, `${symbol} wasn't found in Dhan's NSE/BSE equity list`);
+        return res.json({ ok: true, key: inst.key, symbol: inst.symbol, rows: await addToWatchlist(inst.key) });
+      }
       case 'POST add':
         return res.json({ ok: true, rows: await addToWatchlist(String(body.key || '')) });
       case 'POST remove':

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import Screener from './Screener.jsx';
 import Ticker from './Ticker.jsx';
 import Pnl from './Pnl.jsx';
+import FirstHits from './FirstHits.jsx';
+import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
 
 // ---------------------------------------------------------------- navigation
 // Left menu = sections; the header of the right panel = that section's tabs.
@@ -14,6 +16,7 @@ export const SECTIONS = [
     icon: 'signal',
     tabs: [
       ['hits', 'Hits', 'Signals received from Chartink through the webhook'],
+      ['firsthit', 'First Hit', 'Each stock’s first hit of the day, across your scans'],
       ['screener', 'Screener', 'Every stock your scans have picked, one row per stock'],
       ['setup', 'Webhook setup', 'Connect Chartink and test the webhook'],
     ],
@@ -177,14 +180,14 @@ function Signals({ tab, actionsEl }) {
   const stats = useMemo(() => {
     const all = data.rows;
     if (!all.length) return null;
-    const profits = all.map((r) => r.PotentialProfit);
-    const today = new Date().toDateString();
+    const today = istToday();
+    const todays = all.filter((r) => istDateOf(r.HitTime) === today);
     return {
       hits: data.total,
-      today: all.filter((r) => new Date(r.HitTime).toDateString() === today).length,
+      today: todays.length,
       symbols: new Set(all.map((r) => r.StockSymbol)).size,
-      avg: profits.reduce((a, b) => a + b, 0) / profits.length,
-      best: all.reduce((a, b) => (b.PotentialProfit > a.PotentialProfit ? b : a)),
+      firstToday: new Set(todays.map((r) => r.StockSymbol)).size,
+      scansToday: new Set(todays.map((r) => r.ScanName).filter(Boolean)).size,
       last: all[0],
     };
   }, [data]);
@@ -209,6 +212,9 @@ function Signals({ tab, actionsEl }) {
 
       {error && <div className="alert">⚠ {error}</div>}
 
+      <TickerLinkProvider>
+      {tab === 'firsthit' && <FirstHits rows={data.rows} loading={loading} />}
+
       {tab === 'screener' && <Screener rows={data.rows} total={data.total} loading={loading} lastLoad={lastLoad} />}
 
       {tab === 'setup' && (
@@ -227,13 +233,8 @@ function Signals({ tab, actionsEl }) {
         <Stat label="Total hits" value={stats ? stats.hits.toLocaleString() : '—'} />
         <Stat label="Hits today" value={stats ? stats.today.toLocaleString() : '—'} />
         <Stat label="Unique symbols" value={stats ? stats.symbols : '—'} />
-        <Stat label="Avg potential profit" value={stats ? num.format(stats.avg) : '—'} tone={stats && stats.avg} />
-        <Stat
-          label="Best potential profit"
-          value={stats ? num.format(stats.best.PotentialProfit) : '—'}
-          note={stats?.best.StockSymbol}
-          tone={stats && stats.best.PotentialProfit}
-        />
+        <Stat label="Stocks first hit today" value={stats ? stats.firstToday : '—'} note={stats ? <a className="link" href="#/signals/firsthit">View first hits</a> : null} />
+        <Stat label="Scans active today" value={stats ? stats.scansToday : '—'} />
         <Stat label="Last hit" value={stats ? timeAgo(stats.last.HitTime) : '—'} note={stats?.last.StockSymbol} />
       </section>
 
@@ -310,15 +311,15 @@ function Signals({ tab, actionsEl }) {
                   ['StockSymbol', 'StockSymbol'],
                   ['ScanName', 'Scan'],
                   ['TriggerPrice', 'TriggerPrice'],
-                  ['PotentialProfit', 'PotentialProfit'],
                 ].map(([key, label]) => (
-                  <th key={key} className={key === 'PotentialProfit' || key === 'TriggerPrice' ? 'num' : ''}>
+                  <th key={key} className={key === 'TriggerPrice' ? 'num' : ''}>
                     <button onClick={() => toggleSort(key)}>
                       {label}
                       <span className="arrow">{sort.key === key ? (sort.dir === 'asc' ? '▲' : '▼') : ''}</span>
                     </button>
                   </th>
                 ))}
+                <th className="plain-th" aria-label="Add to Ticker" />
               </tr>
             </thead>
             <tbody>
@@ -331,9 +332,7 @@ function Signals({ tab, actionsEl }) {
                   <td className="num mono">
                     {typeof r.TriggerPrice === 'number' ? num.format(r.TriggerPrice) : <span className="muted-dash">—</span>}
                   </td>
-                  <td className={`num mono ${r.PotentialProfit >= 0 ? 'pos' : 'neg'}`}>
-                    {num.format(r.PotentialProfit)}
-                  </td>
+                  <td className="fh-add"><AddToTicker symbol={r.StockSymbol} /></td>
                 </tr>
               ))}
             </tbody>
@@ -354,6 +353,7 @@ function Signals({ tab, actionsEl }) {
 
         </>
       )}
+      </TickerLinkProvider>
     </>
   );
 }

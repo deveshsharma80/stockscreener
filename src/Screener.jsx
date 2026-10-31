@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
+import { AddToTicker } from './AddToTicker.jsx';
 
 const num = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const pct = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2, signDisplay: 'exceptZero' });
@@ -27,8 +28,6 @@ const COLS = [
   { key: 'firstHit', label: 'First hit', type: 'num' },
   { key: 'latestPrice', label: 'Last trigger ₹', type: 'num' },
   { key: 'priceMove', label: 'Since first hit', type: 'num' },
-  { key: 'latestProfit', label: 'Potential profit', type: 'num' },
-  { key: 'maxProfit', label: 'Best profit', type: 'num' },
   { key: 'scanCount', label: 'Scans', type: 'num' },
 ];
 
@@ -62,7 +61,6 @@ export default function Screener({ rows, total, loading, lastLoad }) {
       s.list.sort((a, b) => new Date(b.HitTime) - new Date(a.HitTime));
       const latest = s.list[0];
       const first = s.list[s.list.length - 1];
-      const profits = s.list.map((h) => h.PotentialProfit).filter((v) => typeof v === 'number');
       const latestPrice = typeof latest.TriggerPrice === 'number' ? latest.TriggerPrice : null;
       const firstPrice = typeof first.TriggerPrice === 'number' ? first.TriggerPrice : null;
       const scanSet = [...new Set(s.list.map((h) => h.ScanName).filter(Boolean))];
@@ -74,9 +72,6 @@ export default function Screener({ rows, total, loading, lastLoad }) {
         firstHit: new Date(first.HitTime).getTime(),
         latestPrice,
         priceMove: latestPrice != null && firstPrice && s.list.length > 1 ? ((latestPrice - firstPrice) / firstPrice) * 100 : null,
-        latestProfit: latest.PotentialProfit,
-        maxProfit: profits.length ? Math.max(...profits) : null,
-        avgProfit: profits.length ? profits.reduce((a, b) => a + b, 0) / profits.length : null,
         scans: scanSet,
         scanCount: scanSet.length,
       });
@@ -105,7 +100,7 @@ export default function Screener({ rows, total, loading, lastLoad }) {
     setSort((s) => ({ key, dir: s.key === key ? (s.dir === 'desc' ? 'asc' : 'desc') : key === 'symbol' ? 'asc' : 'desc' }));
 
   const exportCsv = () => {
-    const header = ['Stock', 'Hits', 'LastHit', 'FirstHit', 'LastTriggerPrice', 'PctSinceFirstHit', 'PotentialProfit', 'BestProfit', 'Scans'];
+    const header = ['Stock', 'Hits', 'LastHit', 'FirstHit', 'LastTriggerPrice', 'PctSinceFirstHit', 'Scans'];
     const esc = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
     const lines = visible.map((s) =>
       [
@@ -115,8 +110,6 @@ export default function Screener({ rows, total, loading, lastLoad }) {
         new Date(s.firstHit).toISOString(),
         s.latestPrice ?? '',
         s.priceMove != null ? s.priceMove.toFixed(2) : '',
-        s.latestProfit ?? '',
-        s.maxProfit ?? '',
         s.scans.join(' | '),
       ].map(esc).join(',')
     );
@@ -168,6 +161,7 @@ export default function Screener({ rows, total, loading, lastLoad }) {
                     </button>
                   </th>
                 ))}
+                <th className="plain-th" aria-label="Add to Ticker" />
               </tr>
             </thead>
             <tbody>
@@ -188,15 +182,14 @@ export default function Screener({ rows, total, loading, lastLoad }) {
                     <td className={`num mono ${s.priceMove > 0 ? 'pos' : s.priceMove < 0 ? 'neg' : ''}`}>
                       {s.priceMove != null ? `${pct.format(s.priceMove)}%` : <Dash />}
                     </td>
-                    <td className={`num mono ${s.latestProfit >= 0 ? 'pos' : 'neg'}`}>{num.format(s.latestProfit)}</td>
-                    <td className="num mono">{s.maxProfit != null ? num.format(s.maxProfit) : <Dash />}</td>
                     <td className="num" title={s.scans.join('\n')}>
                       {s.scanCount ? <span className="pill">{s.scanCount === 1 ? truncate(s.scans[0], 22) : `${s.scanCount} scans`}</span> : <Dash />}
                     </td>
+                    <td className="fh-add"><AddToTicker symbol={s.symbol} /></td>
                   </tr>
                   {open === s.symbol && (
                     <tr className="detail">
-                      <td colSpan={COLS.length}>
+                      <td colSpan={COLS.length + 1}>
                         <History stock={s} />
                       </td>
                     </tr>
@@ -226,7 +219,6 @@ function History({ stock }) {
     <div className="history">
       <div className="history-head">
         <b>{stock.symbol}</b> — {stock.hits} {stock.hits === 1 ? 'hit' : 'hits'}
-        {stock.avgProfit != null && <> · average potential profit {num.format(stock.avgProfit)}</>}
       </div>
       <table>
         <thead>
@@ -234,7 +226,6 @@ function History({ stock }) {
             <th>Time</th>
             <th>Scan</th>
             <th className="num">Trigger ₹</th>
-            <th className="num">Potential profit</th>
             <th>StockID</th>
           </tr>
         </thead>
@@ -244,7 +235,6 @@ function History({ stock }) {
               <td>{fullDate.format(new Date(h.HitTime))}</td>
               <td className="muted-cell">{h.ScanName || '—'}</td>
               <td className="num mono">{typeof h.TriggerPrice === 'number' ? num.format(h.TriggerPrice) : '—'}</td>
-              <td className={`num mono ${h.PotentialProfit >= 0 ? 'pos' : 'neg'}`}>{num.format(h.PotentialProfit)}</td>
               <td className="mono muted-cell small-id">{h.StockID}</td>
             </tr>
           ))}
