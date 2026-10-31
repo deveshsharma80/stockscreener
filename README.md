@@ -30,10 +30,45 @@ To add another table, call `readTable('name')` / `updateTable('name', rows => �
 
 ## Pages
 
-- **Hits** (`/#/`) — every webhook hit as it arrives, summary tiles, Chartink setup panel, test form.
-- **Screener** (`/#/screener`) — one row per stock across all stored hits: hit count, first/last hit, last trigger price, % move since first hit, latest and best potential profit, and which scans picked it. Filter by period (today / 7 / 30 days / all), scan and minimum hits; sort any column; click a stock to see its full hit history; export the current view as CSV.
+Left menu (collapsible; a drawer on phones) with three sections; each section has tabs at the top of the page:
 
-Both pages refresh every 10 seconds while auto-refresh is on.
+| Section | Tabs | Address |
+|---|---|---|
+| **Signals** | Hits · First Hit · Screener · Webhook setup | `#/signals/hits`, `#/signals/firsthit`, `#/signals/screener`, `#/signals/setup` |
+| **Market** | Watchlist · Positions · Orders · Dhan connection | `#/market/watchlist`, `#/market/positions`, `#/market/orders`, `#/market/connection` |
+| **Paper Trading** | Overview · Reports · Trades | `#/paper/overview`, `#/paper/reports`, `#/paper/trades` |
+
+Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching page.
+
+- **Hits** — every webhook hit, summary tiles, filters (HitTime, time window, scan), delete by date range or all.
+- **First Hit** — each stock’s first hit of the day (Today by default, or any day / all days), with hits later that day and other scans that picked it.
+- **Add to Ticker** (Hits, First Hit, Screener) — adds the stock to the Market watchlist by its NSE symbol (`POST /api/ticker {action:"add-symbol"}`); asks for the webhook secret once if this device hasn't saved it.
+- **Buy / Sell at a price** (First Hit, **B** / **S**) — a popup to set the price and quantity; the stock is added to the Ticker and the order waits until the price reaches your level, then a paper **Equity Intraday** trade is placed at the live price. See *Trigger orders* below.
+- **Screener** — one row per stock across all hits; filter by period, scan and minimum hits; CSV export.
+- **Webhook setup** — Chartink URL builder, webhook endpoint details, test form.
+- **Watchlist** — live Dhan prices, 3/5-minute candle charts with EMA crossover, paper Buy / Sell.
+- **Positions** — open paper positions with live P&L and Exit.
+- **Orders** — trigger orders waiting for their price (with Cancel), and what filled, failed or expired.
+- **Dhan connection** — paste / renew the Dhan access token.
+- **Overview / Reports / Trades** — paper account, P&L by trade type, daily and weekly reports, trade history.
+
+## Ticker and Dhan
+
+- Uses Dhan's Quote API (`/v2/marketfeed/quote`, 1 request/second, up to 1000 instruments) through `/api/ticker`, so your Dhan token never reaches the browser. Dhan's WebSocket feed can't be used because Vercel functions can't hold a connection open.
+- Paste your access token in **Dhan connection** on the Ticker page (web.dhan.co → My Profile → Access DhanHQ APIs). It's checked against `/v2/profile` and stored in your private Blob store. Tokens last 24 h; in its last hour the app renews it automatically (`/v2/RenewToken`) while the page is in use. Alternatively set `DHAN_CLIENT_ID` and `DHAN_ACCESS_TOKEN` in Vercel.
+- Instruments come from Dhan's public scrip master CSV (NSE/BSE equity, indices, and live NSE/BSE F&O contracts), cached once a day. The first search of the day takes a few seconds while it downloads.
+- `DHAN_MOCK=1` runs the page on simulated prices for testing.
+
+## Trigger orders (Buy / Sell at your price)
+
+- Always **Equity Intraday** (4× leverage, 0.025% brokerage per side), NSE/BSE stocks only.
+- Direction comes from the price when you place the order: below your price → fills when the price **rises** to it; above → fills when it **falls** to it. The fill is at the live price at that moment (like a stop-market order), so it can be a little past your price.
+- Valid until 3:30 PM IST of the current session (placed after the close or on a weekend → the next weekday's session). Unfilled orders become **Expired**.
+- Paper funds are checked when you place the order and again when it fills; if they've run out it's marked **Not placed**.
+- Checked only during market hours: on every price refresh of the Market pages, and every ~10 s from any other page of the app (the secret must be remembered on that device).
+- With every tab closed, nothing checks prices unless you add a scheduler. Free option: [cron-job.org](https://cron-job.org) → new cron job → URL `https://YOUR-APP.vercel.app/api/ticker?action=check-orders&secret=YOUR_SECRET`, every 1 minute, Mon–Fri. Each call checks waiting orders once.
+- Stored in `paper_orders`. Resetting the paper account cancels waiting orders.
+- Testing outside market hours: set `PAPER_ORDERS_IGNORE_HOURS=1` (with `DHAN_MOCK=1` locally) so orders trigger any time.
 
 ## Chartink (premium alerts → webhook)
 
@@ -123,12 +158,24 @@ Or with the CLI: `npm i -g vercel && vercel` then `vercel --prod`.
 api/webhook.js     POST endpoint for third-party apps
 api/stocks.js      GET endpoint used by the dashboard
 api/log.js         GET last raw Chartink payloads (secret required)
+api/delete.js      POST delete rows (all / date range, secret required)
+api/ticker.js      Ticker page: Dhan connection, instrument search, watchlist, quotes
+lib/dhan.js        Dhan client: token, instrument list, quotes
+lib/paper.js       paper trades, positions, daily/weekly P&L
+lib/orders.js      trigger orders: create, cancel, expire, fill when the price is reached
 lib/chartink.js    Chartink alert → stocks rows
 lib/db.js          JSON-file database (local files or Vercel Blob)
 lib/stocks.js      stocks table schema + validation
 lib/http.js        CORS, body parsing, secret check, errors
 src/App.jsx        Hits page + tabs
 src/Screener.jsx   Screener page (one row per stock)
+src/Ticker.jsx     Ticker page (live Dhan prices, Buy/Sell, positions)
+src/Chart.jsx      3 / 5-minute candle chart
+src/candles.js     builds 3 / 5-minute candles from 1-minute data
+src/Pnl.jsx        P&L reports page
+src/Orders.jsx     Buy/Sell-at-price popup and the Orders table
+src/FirstHits.jsx  First Hit tab
+src/AddToTicker.jsx  "+ Ticker" and B / S buttons on the Signals pages
 data/stocks.json   local table file
 vite.config.js     runs /api routes inside `npm run dev`
 ```

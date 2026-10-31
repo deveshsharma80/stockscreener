@@ -5,6 +5,8 @@ import Ticker from './Ticker.jsx';
 import Pnl from './Pnl.jsx';
 import FirstHits from './FirstHits.jsx';
 import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
+import { SECRET_KEY as TICKER_SECRET, api as tickerApi, store as tickerStore } from './Ticker.jsx';
+import { ORDERS_EVENT, emitOrders, eventText } from './Orders.jsx';
 
 // ---------------------------------------------------------------- navigation
 // Left menu = sections; the header of the right panel = that section's tabs.
@@ -28,6 +30,7 @@ export const SECTIONS = [
     tabs: [
       ['watchlist', 'Watchlist', 'Live prices from Dhan, charts and paper Buy / Sell'],
       ['positions', 'Positions', 'Open paper positions and today’s P&L, priced live'],
+      ['orders', 'Orders', 'Trigger orders waiting for your price, and what filled'],
       ['connection', 'Dhan connection', 'Your Dhan access token and data plan'],
     ],
   },
@@ -761,6 +764,7 @@ export default function App() {
     });
 
   const current = section.tabs.find((t) => t[0] === tab);
+  useOrderWatcher(section.id !== 'market'); // the Market pages check orders with every price refresh
 
   return (
     <div className={`shell ${collapsed ? 'nav-collapsed' : ''} ${drawer ? 'drawer-open' : ''}`}>
@@ -841,12 +845,96 @@ export default function App() {
           </nav>
         </div>
 
+        <OrderToasts />
         <div className="content">
           {section.id === 'signals' && <Signals tab={tab} actionsEl={actionsEl} />}
           {section.id === 'market' && <Ticker subview={tab} actionsEl={actionsEl} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
         </div>
       </main>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- trigger-order watcher
+// Outside the Market pages nothing else asks for prices, so check waiting
+// orders every ~10 s here (the server says how often: slower when nothing is
+// waiting or the market is closed). Needs the secret saved on this device.
+function useOrderWatcher(active) {
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    let timer;
+    let wait = 60_000;
+    const tick = async () => {
+      clearTimeout(timer);
+      const secret = tickerStore.get(TICKER_SECRET);
+      if (secret && !document.hidden) {
+        try {
+          const j = await tickerApi(secret, 'check-orders');
+          wait = j.orders?.checkEveryMs || 60_000;
+          if (j.orders?.events?.length) emitOrders({ events: j.orders.events, pending: j.orders.pending });
+        } catch (e) {
+          wait = e.status === 401 || e.status === 403 ? 300_000 : 60_000;
+        }
+      }
+      if (alive) timer = setTimeout(tick, wait);
+    };
+    // A new order: start checking at the fast pace straight away
+    const onOrders = (e) => {
+      if (e.detail?.placed) {
+        clearTimeout(timer);
+        timer = setTimeout(tick, 3000);
+      }
+    };
+    const onVisible = () => !document.hidden && tick();
+    window.addEventListener(ORDERS_EVENT, onOrders);
+    document.addEventListener('visibilitychange', onVisible);
+    timer = setTimeout(tick, 1500);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      window.removeEventListener(ORDERS_EVENT, onOrders);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [active]);
+}
+
+/** Pop-up notes when a trigger order fills, fails or expires. */
+function OrderToasts() {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    const seen = new Set();
+    const on = (e) => {
+      const fresh = (e.detail?.events || []).filter((o) => !seen.has(`${o.id}:${o.status}`));
+      if (!fresh.length) return;
+      fresh.forEach((o) => seen.add(`${o.id}:${o.status}`));
+      setItems((list) => [...list, ...fresh.map((o) => ({ key: `${o.id}:${o.status}`, o }))].slice(-4));
+      for (const o of fresh) {
+        if (o.status !== 'FILLED') continue;
+        try {
+          if ('Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification('Paper order filled', { body: eventText(o) });
+        } catch {}
+      }
+    };
+    window.addEventListener(ORDERS_EVENT, on);
+    return () => window.removeEventListener(ORDERS_EVENT, on);
+  }, []);
+  if (!items.length) return null;
+  const close = (key) => setItems((list) => list.filter((x) => x.key !== key));
+  return (
+    <div className="toasts" role="status" aria-live="polite">
+      {items.map(({ key, o }) => (
+        <div key={key} className={`toast ${o.status === 'FILLED' ? 'ok' : o.status === 'FAILED' ? 'bad' : ''}`}>
+          <span>{o.status === 'FILLED' ? '✓' : o.status === 'FAILED' ? '⚠' : '⏱'} {eventText(o)}</span>
+          <span className="toast-actions">
+            <a className="link" href={o.status === 'FILLED' ? '#/market/positions' : '#/market/orders'} onClick={() => close(key)}>
+              {o.status === 'FILLED' ? 'Positions' : 'Orders'}
+            </a>
+            <button className="link" onClick={() => close(key)} aria-label="Dismiss">×</button>
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

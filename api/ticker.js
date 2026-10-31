@@ -19,9 +19,18 @@
 //      qty in shares (F&O: multiple of lot size)
 // POST {action:"paper-capital", amount}               set the starting amount (keeps trades)
 // POST {action:"paper-reset", amount?}                delete all paper trades, optionally set a new starting amount
+//
+// Trigger orders (always Equity Intraday; fill at the live price once it reaches the trigger):
+// GET  ?action=resolve&symbol=SBIN                    instrument, live price and funds for the order popup
+// GET  ?action=orders                                 pending + recent orders
+// POST {action:"place-order", symbol|key, side, qty, triggerPrice, refPrice?, source?}
+//      also adds the stock to the Ticker
+// POST {action:"cancel-order", id}
+// GET  ?action=check-orders                           check prices now (for an outside scheduler, e.g. every minute)
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { PRODUCTS, addTrade, checkFunds, computeBook, productFor, readAccount, readTrades, resetTrades, setCapital, validateOrder } from '../lib/paper.js';
+import { cancelAllPending, cancelOrder, createOrder, ignoreHours, openKeys, processOrders, readOrders, sessionEnd } from '../lib/orders.js';
 import {
   DhanError,
   SEGMENTS,
@@ -78,8 +87,28 @@ export default async function handler(req, res) {
         if (!inst) throw new HttpError(404, `${key} is not a known instrument`);
         return res.json({ ok: true, key, candles: await getIntradayCandles(inst, { days }), market: marketStatus() });
       }
-      case 'GET quotes':
-        return res.json({ ok: true, ...(await quotes(req.query?.keys)), market: marketStatus(), at: new Date().toISOString() });
+      case 'GET quotes': {
+        // Pending trigger orders are priced (and filled) with every quote poll.
+        const pendingKeys = openKeys(await readOrders());
+        const q = await quotes(req.query?.keys, pendingKeys);
+        const orders = await checkOrders({ quotes: q.quotes });
+        return res.json({ ok: true, ...q, orders, market: marketStatus(), at: new Date().toISOString() });
+      }
+      case 'GET check-orders':
+      case 'POST check-orders':
+        return res.json({ ok: true, orders: await checkOrders({ fresh: true }), market: marketStatus(), at: new Date().toISOString() });
+      case 'GET orders':
+        return res.json({ ok: true, ...(await ordersView()) });
+      case 'GET resolve':
+        return res.json({ ok: true, ...(await resolveForOrder(req.query || {})) });
+      case 'POST place-order': {
+        const { order, rows, watchNote } = await placeTriggerOrder(body);
+        return res.json({ ok: true, order, rows, watchNote, ...(await ordersView()) });
+      }
+      case 'POST cancel-order': {
+        const order = await cancelOrder(String(body.id || ''));
+        return res.json({ ok: true, order, ...(await ordersView()) });
+      }
       case 'POST connect': {
         const { profile: p, creds } = await connectToken(body);
         return res.json({ ok: true, ...describeCreds(creds), profile: pickProfile(p) });
@@ -103,7 +132,7 @@ export default async function handler(req, res) {
       case 'GET paper':
         return res.json({ ok: true, ...(await paperBook()) });
       case 'POST trade': {
-        const trade = await placePaperTrade(body);
+        const trade = await placePaperTrade({ key: body.key, side: body.side, qty: body.qty, product: body.product });
         return res.json({ ok: true, trade, ...(await paperBook()) });
       }
       case 'POST paper-capital':
@@ -112,6 +141,7 @@ export default async function handler(req, res) {
       case 'POST paper-reset':
         if (body.amount !== undefined && body.amount !== null && body.amount !== '') await setCapital(body.amount);
         await resetTrades();
+        await cancelAllPending();
         return res.json({ ok: true, ...(await paperBook()) });
       default:
         throw new HttpError(400, `Unknown action "${action}"`);
@@ -202,8 +232,8 @@ async function removeFromWatchlist(key) {
 
 // ------------------------------------------------------------------ quotes
 
-async function quotes(keysParam) {
-  const keys = [...new Set(String(keysParam || '').split(',').map((k) => k.trim()).filter(Boolean))];
+async function quotes(keysParam, extraKeys = []) {
+  const keys = [...new Set([...String(keysParam || '').split(','), ...extraKeys].map((k) => k.trim()).filter(Boolean))];
   if (keys.length > 1000) throw new HttpError(400, 'At most 1000 instruments per request');
   const instruments = [];
   for (const k of keys) {
@@ -215,7 +245,7 @@ async function quotes(keysParam) {
 
 // ------------------------------------------------------------------ paper trading
 
-async function placePaperTrade({ key, side, qty, product }) {
+async function placePaperTrade({ key, side, qty, product, orderId }) {
   key = String(key || '');
   side = String(side || '').toUpperCase();
   qty = Number(qty);
@@ -252,10 +282,127 @@ async function placePaperTrade({ key, side, qty, product }) {
     const what = funds.leverage > 1 ? `margin at ${funds.leverage}× + brokerage` : 'value + brokerage';
     throw new HttpError(400, `Not enough paper funds for ${PRODUCTS[product].label}: this order needs ₹${f(funds.required)} (${what}), available ₹${f(funds.available)}.`, { kind: 'funds' });
   }
-  return addTrade({ inst, side, qty, price: quote.ltp, marketOpen: marketStatus().open, product });
+  return addTrade({ inst, side, qty, price: quote.ltp, marketOpen: marketStatus().open, product, orderId });
 }
 
 async function paperBook() {
   const [trades, account] = await Promise.all([readTrades(), readAccount()]);
   return computeBook(trades, undefined, account);
+}
+
+// ------------------------------------------------------------------ trigger orders
+
+const ORDER_PRODUCT = 'EQ_INTRADAY';
+
+/** Check pending orders; never fails the request that asked (quotes keep flowing). */
+async function checkOrders({ quotes: known = {}, fresh = false } = {}) {
+  try {
+    const r = await processOrders({
+      quotes: known,
+      fresh,
+      marketOpen: marketStatus().open,
+      fetchQuotes: async (keys) =>
+        getQuotes(keys.map((k) => KEY_RE.exec(k)).filter(Boolean).map((m) => ({ segment: m[1], securityId: m[2] }))),
+      fill: (o) => placePaperTrade({ key: o.key, side: o.side, qty: o.qty, product: ORDER_PRODUCT, orderId: o.id }),
+      findTrade: async (id) => (await readTrades()).find((t) => t.orderId === id) || null,
+    });
+    const active = r.pending > 0 && (marketStatus().open || ignoreHours());
+    return { ...r, checkEveryMs: active ? 10_000 : 60_000 };
+  } catch (err) {
+    return { events: [], pending: null, error: err.message, checkEveryMs: 30_000 };
+  }
+}
+
+async function ordersView() {
+  const rows = await readOrders({ fresh: true });
+  const orders = [...rows].sort((a, b) => (a.status === 'PENDING') === (b.status === 'PENDING') ? b.createdAt.localeCompare(a.createdAt) : a.status === 'PENDING' ? -1 : 1);
+  return { orders, market: marketStatus(), ignoreHours: ignoreHours() };
+}
+
+async function instForOrder({ key, symbol }) {
+  key = String(key || '');
+  symbol = String(symbol || '').trim().toUpperCase();
+  let inst = null;
+  if (key) {
+    if (!KEY_RE.test(key)) throw new HttpError(400, 'Unknown instrument');
+    inst = (await readTable(WATCHLIST)).find((r) => r.key === key) || (await lookupInstrument(key));
+  } else if (symbol) {
+    inst = await findEquityBySymbol(symbol);
+    if (!inst) throw new HttpError(404, `${symbol} wasn't found in Dhan's NSE/BSE equity list`);
+  } else {
+    throw new HttpError(400, 'Which stock? Send a symbol like SBIN');
+  }
+  if (!inst) throw new HttpError(404, `${key} is not a known instrument`);
+  if (productFor(inst) !== ORDER_PRODUCT) throw new HttpError(400, 'Trigger orders are Equity Intraday only: pick an NSE/BSE stock.');
+  return inst;
+}
+
+/** What the order popup needs: the instrument, its live price and the paper funds. */
+async function resolveForOrder(params) {
+  const inst = await instForOrder(params);
+  let quote = null;
+  let quoteError = null;
+  try {
+    quote = await getFillQuote(inst);
+  } catch (err) {
+    quoteError = err.message;
+  }
+  const book = await paperBook();
+  const pos = book.positions.find((p) => p.key === inst.key && p.qty !== 0) || null;
+  return {
+    inst: { key: inst.key, symbol: inst.symbol, name: inst.name, segment: inst.segment },
+    ltp: quote?.ltp ?? null,
+    change: quote?.change ?? null,
+    changePct: quote?.changePct ?? null,
+    quoteError,
+    position: pos && { qty: pos.qty, avg: pos.avg, product: pos.product },
+    account: book.account,
+    product: { id: ORDER_PRODUCT, ...PRODUCTS[ORDER_PRODUCT] },
+    validUntil: sessionEnd(),
+    market: marketStatus(),
+    ignoreHours: ignoreHours(),
+  };
+}
+
+async function placeTriggerOrder(body) {
+  const side = String(body.side || '').toUpperCase();
+  const qty = Number(body.qty);
+  const triggerPrice = Math.round(Number(body.triggerPrice) * 100) / 100;
+  if (side !== 'BUY' && side !== 'SELL') throw new HttpError(400, 'Side must be BUY or SELL');
+  if (!Number.isInteger(qty) || qty <= 0 || qty > 10_000_000) throw new HttpError(400, 'Quantity must be a whole number above 0');
+  if (!Number.isFinite(triggerPrice) || triggerPrice <= 0 || triggerPrice > 1e7) throw new HttpError(400, 'Enter the price at which to take the trade');
+
+  const inst = await instForOrder(body);
+  const key = `${inst.segment}:${inst.securityId}`;
+  const quote = await getFillQuote(inst); // needs Dhan: sets which way the price has to move
+
+  // Funds at the trigger price (checked again when it fills)
+  const book = await paperBook();
+  const problem = validateOrder(book, inst, { key, side, qty, product: ORDER_PRODUCT });
+  if (problem) throw new HttpError(400, problem, { kind: 'rules' });
+  const funds = checkFunds(book, { key, side, qty, price: triggerPrice, product: ORDER_PRODUCT });
+  if (!funds.ok) {
+    const f = (v) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    throw new HttpError(400, `Not enough paper funds: at ₹${f(triggerPrice)} this order needs ₹${f(funds.required)} (margin at ${funds.leverage}× + brokerage), available ₹${f(funds.available)}.`, { kind: 'funds' });
+  }
+
+  // Into the Ticker, so it shows up on the Market pages
+  let rows = null;
+  let watchNote = null;
+  try {
+    rows = await addToWatchlist(key);
+  } catch (err) {
+    watchNote = `Couldn't add to the Ticker: ${err.message}`;
+  }
+
+  const order = await createOrder({
+    inst,
+    side,
+    qty,
+    triggerPrice,
+    ltp: quote.ltp,
+    refPrice: Number.isFinite(Number(body.refPrice)) && body.refPrice !== null && body.refPrice !== '' ? Number(body.refPrice) : null,
+    source: body.source,
+  });
+  return { order, rows, watchNote };
 }

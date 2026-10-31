@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AddToTicker } from './AddToTicker.jsx';
+import { AddToTicker, OrderButtons } from './AddToTicker.jsx';
 
 // First Hit: for each day (Indian time), the first time each stock was picked,
 // with how many more times — and by which scans — it was picked that day.
@@ -118,6 +118,7 @@ export default function FirstHits({ rows, loading }) {
                 <Th k="price" num>Trigger ₹</Th>
                 <Th k="count" num>Hits that day</Th>
                 <th className="plain-th">Also picked by</th>
+                <th className="plain-th" title="Buy or Sell when the price reaches your level (Equity Intraday paper trade)">Trade at price</th>
                 <th className="plain-th" aria-label="Add to Ticker" />
               </tr>
             </thead>
@@ -135,6 +136,7 @@ export default function FirstHits({ rows, loading }) {
                   <td className="muted-cell fh-later" title={f.laterScans.join('\n')}>
                     {f.laterScans.length ? f.laterScans.join(', ') : <span className="muted-dash">—</span>}
                   </td>
+                  <td className="fh-trade"><OrderButtons symbol={f.symbol} refPrice={f.price} /></td>
                   <td className="fh-add"><AddToTicker symbol={f.symbol} /></td>
                 </tr>
               ))}
@@ -148,6 +150,7 @@ export default function FirstHits({ rows, loading }) {
         <div className="foot">
           {view.length} {view.length === 1 ? 'stock' : 'stocks'} · each stock’s first hit of the day (Indian time)
           {scan ? ' within the selected scan' : ' across all scans'}
+          {' '}· B / S: take an Equity Intraday paper trade when the price reaches your level
         </div>
       </section>
     </>
