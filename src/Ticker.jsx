@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 // The chart library is only downloaded when a chart is opened.
 const Chart = lazy(() => import('./Chart.jsx'));
@@ -99,7 +100,7 @@ export async function api(secret, action, { method = 'GET', params = {}, body } 
 
 // ------------------------------------------------------------------ page
 
-export default function Ticker() {
+export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
   const [secret, setSecret] = useState(() => store.get(SECRET_KEY));
   const [unlocked, setUnlocked] = useState(false);
   const [conn, setConn] = useState(null);
@@ -113,7 +114,6 @@ export default function Ticker() {
   const [hidden, setHidden] = useState(() => typeof document !== 'undefined' && document.hidden);
   const [tab, setTab] = useState('all');
   const [sort, setSort] = useState({ key: 'order', dir: 'asc' });
-  const [showConn, setShowConn] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [pageError, setPageError] = useState('');
   const [book, setBook] = useState(null); // paper trading: positions, trades, reports
@@ -130,7 +130,6 @@ export default function Ticker() {
       setRows(wl.rows);
       setBook(pb);
       setUnlocked(true);
-      if (!st.connected || st.problem) setShowConn(true);
       return true;
     } catch (e) {
       if (e.kind === 'secret' || e.status === 401 || e.status === 403) setUnlocked(false);
@@ -160,6 +159,14 @@ export default function Ticker() {
     document.addEventListener('visibilitychange', on);
     return () => document.removeEventListener('visibilitychange', on);
   }, []);
+
+  // Tell the side menu about the Dhan connection
+  useEffect(() => {
+    if (!conn) return;
+    const left = timeLeft(conn.expiresAt);
+    const ok = Boolean(conn.connected && !conn.problem && left !== 'expired' && !(feedError && feedError.kind === 'auth'));
+    window.dispatchEvent(new CustomEvent('stockhits:conn', { detail: { ok, left: ok ? left : null } }));
+  }, [conn, feedError]);
 
   // ---- live polling (one request at a time, never overlapping). Open paper
   // positions are always priced, even if removed from the watchlist.
@@ -297,44 +304,45 @@ export default function Ticker() {
 
   return (
     <>
-      <div className="tk-bar">
-        <ConnChip conn={conn} onClick={() => setShowConn((v) => !v)} open={showConn} />
-        {market && <span className={`tk-market ${market.open ? 'open' : ''}`}><i />{market.label}</span>}
-        <div className="tk-live">
-          <span className={`tk-dot ${running ? 'on' : ''}`} />
-          <span className="tk-live-text">
-            {!conn?.connected
-              ? 'Not connected'
-              : stoppedFor
-                ? 'Stopped'
-                : paused
-                  ? 'Paused'
-                  : hidden
-                    ? 'Paused while tab is hidden'
-                    : !keys
-                      ? 'Add an instrument'
-                      : lastAt
-                        ? `Updated ${lastAt.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`
-                        : 'Connecting…'}
-          </span>
-          <select
-            className="select tk-int"
-            value={intervalMs}
-            onChange={(e) => {
-              setIntervalMs(Number(e.target.value));
-              store.set(INTERVAL_KEY, e.target.value);
-            }}
-            aria-label="Refresh every"
-          >
-            {INTERVALS.map(([v, l]) => <option key={v} value={v}>Every {l}</option>)}
-          </select>
-          <button className="btn" onClick={() => setPaused((p) => !p)} disabled={!conn?.connected}>
-            {paused ? 'Resume' : 'Pause'}
-          </button>
-        </div>
-      </div>
+      {/* Live feed controls live in the page header */}
+      {actionsEl &&
+        createPortal(
+          <div className="tk-live">
+            <span className={`tk-dot ${running ? 'on' : ''}`} />
+            <span className="tk-live-text">
+              {!conn?.connected
+                ? 'Not connected'
+                : stoppedFor
+                  ? 'Stopped'
+                  : paused
+                    ? 'Paused'
+                    : hidden
+                      ? 'Paused while tab is hidden'
+                      : !keys
+                        ? 'Add an instrument'
+                        : lastAt
+                          ? `Updated ${lastAt.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`
+                          : 'Connecting…'}
+            </span>
+            <select
+              className="select tk-int"
+              value={intervalMs}
+              onChange={(e) => {
+                setIntervalMs(Number(e.target.value));
+                store.set(INTERVAL_KEY, e.target.value);
+              }}
+              aria-label="Refresh every"
+            >
+              {INTERVALS.map(([v, l]) => <option key={v} value={v}>Every {l}</option>)}
+            </select>
+            <button className="btn" onClick={() => setPaused((p) => !p)} disabled={!conn?.connected}>
+              {paused ? 'Resume' : 'Pause'}
+            </button>
+          </div>,
+          actionsEl
+        )}
 
-      {showConn && (
+      {subview === 'connection' && (
         <ConnectionPanel
           secret={secret}
           conn={conn}
@@ -342,28 +350,36 @@ export default function Ticker() {
             setConn((old) => ({ ...old, ...c }));
             setFeedError(null);
           }}
-          onClose={() => setShowConn(false)}
+          onClose={() => (window.location.hash = '#/market/watchlist')}
         />
       )}
 
+      {subview !== 'connection' && conn && (!conn.connected || conn.problem) && !feedError && (
+        <div className="alert" role="status">
+          ⚠ {conn.connected ? conn.problem : 'Dhan is not connected, so prices won’t load.'}{' '}
+          <a className="link" href="#/market/connection">Open Dhan connection</a>
+        </div>
+      )}
       {pageError && (
         <div className="alert" role="alert">
           ⚠ {pageError} <button className="link" onClick={() => setPageError('')}>Dismiss</button>
         </div>
       )}
-      {feedError && (
+      {feedError && subview !== 'connection' && (
         <div className={`alert ${feedError.kind === 'rate' ? 'soft' : ''}`} role="status">
           ⚠ {feedError.message}
           {(feedError.kind === 'auth' || feedError.kind === 'plan') && (
-            <> <button className="link" onClick={() => setShowConn(true)}>Open Dhan connection</button></>
+            <> <a className="link" href="#/market/connection">Open Dhan connection</a></>
           )}
           {feedError.kind === 'rate' && ' Retrying in a few seconds.'}
         </div>
       )}
-      {market && !market.open && conn?.connected && keys && !feedError && (
+      {subview !== 'connection' && market && !market.open && conn?.connected && keys && !feedError && (
         <p className="tk-note">Market is closed, so prices refresh every 30 s and show the last traded values. Paper trades fill at the last traded price.</p>
       )}
 
+      {subview === 'watchlist' && (
+        <>
       <section className="card">
         <div className="card-head">
           <h2>Ticker</h2>
@@ -450,7 +466,12 @@ export default function Ticker() {
         </Suspense>
       )}
 
-      <PositionsCard book={book} quotes={quotes} onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))} />
+        </>
+      )}
+
+      {subview === 'positions' && (
+        <PositionsCard book={book} quotes={quotes} onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))} />
+      )}
     </>
   );
 }
@@ -704,7 +725,7 @@ function PositionsCard({ book, quotes, onExit }) {
           <span>Open <b className={`mono ${tone(openSum)}`}>{signed.format(openSum)}</b></span>
           <span>Brokerage <b className="mono neg">{chargesToday ? `−${price.format(chargesToday)}` : '0.00'}</b></span>
           <span className="tk-day-total">Today's net P&amp;L <b className={`mono ${tone(dayTotal)}`}>{money(dayTotal)}</b></span>
-          <a className="btn" href="#/pnl">P&amp;L reports →</a>
+          <a className="btn" href="#/paper/reports">P&amp;L reports →</a>
         </div>
       </div>
       {book?.account && (
@@ -715,7 +736,7 @@ function PositionsCard({ book, quotes, onExit }) {
           )}
           <span>Margin used <b className="mono">₹{price.format(book.account.used)}</b></span>
           <span>Starting amount <b className="mono">₹{price.format(book.account.startingCapital)}</b>{book.account.isDefault && ' (default)'}</span>
-          <a className="link" href="#/pnl">Change or reset amount</a>
+          <a className="link" href="#/paper/overview">Change or reset amount</a>
         </div>
       )}
       {msg && <p className={`status ${msg.kind} tk-pos-msg`}>{msg.text}</p>}

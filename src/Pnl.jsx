@@ -16,7 +16,7 @@ const weekLabel = (d) => {
 };
 const PAGE = 100;
 
-export default function Pnl() {
+export default function Pnl({ subview = 'overview' }) {
   const [secret, setSecret] = useState(() => store.get(SECRET_KEY));
   const [checking, setChecking] = useState(Boolean(store.get(SECRET_KEY)));
   const [unlocked, setUnlocked] = useState(false);
@@ -161,6 +161,7 @@ export default function Pnl() {
     <>
       {error && <div className="alert">⚠ {error}</div>}
 
+      {subview === 'overview' && (
       <section className="card pad pnl-account">
         <div className="pnl-acct-head">
           <h2>Paper account</h2>
@@ -217,6 +218,8 @@ export default function Pnl() {
         </p>
       </section>
 
+      )}
+
       <div className="pnl-typebar">
         <span className="flabel">Trade type</span>
         <div className="seg" role="group" aria-label="Trade type">
@@ -228,6 +231,7 @@ export default function Pnl() {
         </div>
       </div>
 
+      {subview !== 'trades' && (
       <section className="stats pnl-tiles">
         <Tile
           label={`Today's net P&L${type === 'ALL' ? '' : ` · ${PRODUCT_LABEL[type]}`}`}
@@ -247,8 +251,11 @@ export default function Pnl() {
         </div>
       </section>
 
-      <ByType reports={reports} openPnlFor={(k) => openPnlOf(openAll.filter((p) => k === 'ALL' || p.product === k))} selected={type} onPick={(k) => (setType(k), setDayFilter(''), setShown(PAGE))} />
+      )}
 
+      {subview === 'overview' && <ByType reports={reports} openPnlFor={(k) => openPnlOf(openAll.filter((p) => k === 'ALL' || p.product === k))} selected={type} onPick={(k) => (setType(k), setDayFilter(''), setShown(PAGE))} />}
+
+      {subview === 'reports' && (
       <section className="card">
         <div className="card-head">
           <h2>P&amp;L report{type !== 'ALL' && <span className="pnl-type-tag">{PRODUCT_LABEL[type]}</span>}</h2>
@@ -263,14 +270,16 @@ export default function Pnl() {
           label={view === 'daily' ? dateLabel : weekLabel}
           current={view === 'daily' ? book.today : t.thisWeek}
           openPnl={open.length ? openPnl : null}
-          onPickDay={view === 'daily' ? (d) => (setDayFilter(d), setShown(PAGE), document.getElementById('pnl-trades')?.scrollIntoView({ behavior: 'smooth' })) : null}
+          onPickDay={view === 'daily' ? (d) => (setDayFilter(d), setShown(PAGE), (window.location.hash = '#/paper/trades')) : null}
         />
         <div className="foot">
           Booked P&amp;L by {view === 'daily' ? 'trading day' : 'week, Monday to Sunday'}, Indian time. Net = gross − brokerage (per buy and per sell: Options Buying {book.products?.OPT_BUY?.brokeragePct ?? 1}%, Equity Intraday {book.products?.EQ_INTRADAY?.brokeragePct ?? 0.025}% of trade value). Bars and cumulative use net.
           {open.length > 0 && ' Open positions are shown separately for the current period.'}
         </div>
       </section>
+      )}
 
+      {subview === 'trades' && (
       <section className="card" id="pnl-trades">
         <div className="filters">
           <h2 className="pnl-h">Trades</h2>
@@ -330,6 +339,7 @@ export default function Pnl() {
           )}
         </div>
       </section>
+      )}
 
     </>
   );

@@ -1,21 +1,70 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Screener from './Screener.jsx';
 import Ticker from './Ticker.jsx';
 import Pnl from './Pnl.jsx';
 
-// Hash routing (#/ and #/screener) needs no server rewrites on Vercel.
-function useHashPage() {
-  const read = () => {
-    const p = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0];
-    return ['screener', 'ticker', 'pnl'].includes(p) ? p : 'hits';
-  };
-  const [page, setPage] = useState(read);
+// ---------------------------------------------------------------- navigation
+// Left menu = sections; the header of the right panel = that section's tabs.
+// Hash routes (#/section/tab) need no server rewrites on Vercel.
+export const SECTIONS = [
+  {
+    id: 'signals',
+    label: 'Signals',
+    icon: 'signal',
+    tabs: [
+      ['hits', 'Hits', 'Signals received from Chartink through the webhook'],
+      ['screener', 'Screener', 'Every stock your scans have picked, one row per stock'],
+      ['setup', 'Webhook setup', 'Connect Chartink and test the webhook'],
+    ],
+  },
+  {
+    id: 'market',
+    label: 'Market',
+    icon: 'candles',
+    tabs: [
+      ['watchlist', 'Watchlist', 'Live prices from Dhan, charts and paper Buy / Sell'],
+      ['positions', 'Positions', 'Open paper positions and today’s P&L, priced live'],
+      ['connection', 'Dhan connection', 'Your Dhan access token and data plan'],
+    ],
+  },
+  {
+    id: 'paper',
+    label: 'Paper Trading',
+    icon: 'wallet',
+    tabs: [
+      ['overview', 'Overview', 'Paper account, today’s and this week’s P&L by trade type'],
+      ['reports', 'Reports', 'Daily and weekly P&L after brokerage'],
+      ['trades', 'Trades', 'Every paper trade, with brokerage and P&L'],
+    ],
+  },
+];
+// Links from earlier versions keep working
+const LEGACY = { '': 'signals/hits', hits: 'signals/hits', screener: 'signals/screener', ticker: 'market/watchlist', pnl: 'paper/overview' };
+
+function parseRoute() {
+  const raw = window.location.hash.replace(/^#\/?/, '').split('?')[0].replace(/\/$/, '');
+  const [sec, tab] = (LEGACY[raw] || raw).split('/');
+  const section = SECTIONS.find((x) => x.id === sec) || SECTIONS[0];
+  const t = section.tabs.find((x) => x[0] === tab) || section.tabs[0];
+  return { section, tab: t[0] };
+}
+
+function useRoute() {
+  const [route, setRoute] = useState(parseRoute);
   useEffect(() => {
-    const on = () => setPage(read());
-    window.addEventListener('hashchange', on);
-    return () => window.removeEventListener('hashchange', on);
+    // normalise legacy / partial links to #/section/tab
+    const sync = () => {
+      const r = parseRoute();
+      const want = `#/${r.section.id}/${r.tab}`;
+      if (window.location.hash !== want) history.replaceState(null, '', want);
+      setRoute(r);
+    };
+    sync();
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
   }, []);
-  return page;
+  return route;
 }
 
 const REFRESH_MS = 10_000;
@@ -59,7 +108,8 @@ function timeAgo(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export default function App() {
+/** Signals section: Hits, Screener, Webhook setup (Chartink data). */
+function Signals({ tab, actionsEl }) {
   const [data, setData] = useState({ rows: [], total: 0 });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -71,7 +121,6 @@ export default function App() {
   const [sort, setSort] = useState({ key: 'HitTime', dir: 'desc' });
   const [lastLoad, setLastLoad] = useState(null);
   const [showDelete, setShowDelete] = useState(false);
-  const page = useHashPage();
 
   const load = useCallback(async () => {
     try {
@@ -89,12 +138,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (page === 'ticker' || page === 'pnl') return; // these pages load their own data
     load();
     if (!auto) return;
     const t = setInterval(load, REFRESH_MS);
     return () => clearInterval(t);
-  }, [auto, load, page]);
+  }, [auto, load]);
 
   const scanNames = useMemo(
     () => [...new Set(data.rows.map((r) => r.ScanName).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
@@ -145,46 +193,35 @@ export default function App() {
     setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }));
 
   return (
-    <div className={`page ${page === 'ticker' || page === 'pnl' ? 'page-wide' : ''}`}>
-      <header className="top">
-        <div>
-          <h1>{page === 'screener' ? 'Stocks Screener' : page === 'ticker' ? 'Ticker' : page === 'pnl' ? 'Paper P&L' : 'Stock Hits'}</h1>
-          <p className="sub">
-            {page === 'screener'
-              ? 'Every stock your scans have picked, one row per stock'
-              : page === 'ticker'
-                ? 'Live prices from Dhan for the stocks, indices and F&O contracts you pick — with paper Buy / Sell'
-                : page === 'pnl'
-                  ? 'Daily and weekly P&L of your paper (dummy) trades'
-                  : 'Signals received through the webhook'}
-            {page !== 'ticker' && page !== 'pnl' && data.storage && <span className="badge">{data.storage === 'blob' ? 'Vercel Blob' : 'local JSON'}</span>}
-          </p>
-        </div>
-        <div className="controls" hidden={page === 'ticker' || page === 'pnl'}>
-          <label className="switch">
-            <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
-            <span>Auto-refresh</span>
-          </label>
-          <button className="btn" onClick={load}>Refresh</button>
-        </div>
-      </header>
+    <>
+      {actionsEl &&
+        createPortal(
+          <>
+            {data.storage && <span className="badge">{data.storage === 'blob' ? 'Vercel Blob' : 'local JSON'}</span>}
+            <label className="switch">
+              <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+              <span>Auto-refresh</span>
+            </label>
+            <button className="btn" onClick={load}>Refresh</button>
+          </>,
+          actionsEl
+        )}
 
-      <nav className="tabs" aria-label="Pages">
-        <a href="#/" className={page === 'hits' ? 'active' : ''}>Hits</a>
-        <a href="#/screener" className={page === 'screener' ? 'active' : ''}>Screener</a>
-        <a href="#/ticker" className={page === 'ticker' ? 'active' : ''}>Ticker</a>
-        <a href="#/pnl" className={page === 'pnl' ? 'active' : ''}>P&amp;L</a>
-      </nav>
+      {error && <div className="alert">⚠ {error}</div>}
 
-      {error && page !== 'ticker' && page !== 'pnl' && <div className="alert">⚠ {error}</div>}
+      {tab === 'screener' && <Screener rows={data.rows} total={data.total} loading={loading} lastLoad={lastLoad} />}
 
-      {page === 'ticker' ? (
-        <Ticker />
-      ) : page === 'pnl' ? (
-        <Pnl />
-      ) : page === 'screener' ? (
-        <Screener rows={data.rows} total={data.total} loading={loading} lastLoad={lastLoad} />
-      ) : (
+      {tab === 'setup' && (
+        <>
+          <ChartinkSetup secretRequired={data.secretRequired} />
+          <div className="two-col">
+            <WebhookInfo secretRequired={data.secretRequired} />
+            <TestHit secretRequired={data.secretRequired} onSent={load} />
+          </div>
+        </>
+      )}
+
+      {tab === 'hits' && (
         <>
       <section className="stats">
         <Stat label="Total hits" value={stats ? stats.hits.toLocaleString() : '—'} />
@@ -315,15 +352,9 @@ export default function App() {
         </div>
       </section>
 
-      <ChartinkSetup secretRequired={data.secretRequired} />
-
-      <div className="two-col">
-        <WebhookInfo secretRequired={data.secretRequired} />
-        <TestHit secretRequired={data.secretRequired} onSent={load} />
-      </div>
         </>
       )}
-    </div>
+    </>
   );
 }
 
@@ -678,4 +709,199 @@ function DeletePanel({ rows, total, onClose, onDeleted }) {
 
 function fmtDay(d) {
   return new Date(`${d}T12:00:00+05:30`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+}
+
+// ---------------------------------------------------------------- app shell
+
+const NAV_KEY = 'stockhits.navCollapsed';
+const readCollapsed = () => {
+  try {
+    return localStorage.getItem(NAV_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+/** NSE session (Mon–Fri 09:15–15:30 IST, holidays not included) */
+function marketOpenNow() {
+  const n = new Date(Date.now() + 330 * 60_000);
+  const mins = n.getUTCHours() * 60 + n.getUTCMinutes();
+  const day = n.getUTCDay();
+  return day >= 1 && day <= 5 && mins >= 555 && mins < 930;
+}
+
+export default function App() {
+  const { section, tab } = useRoute();
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [drawer, setDrawer] = useState(false);
+  const [actionsEl, setActionsEl] = useState(null);
+  const [marketOpen, setMarketOpen] = useState(marketOpenNow);
+  const [dhan, setDhan] = useState(null); // reported by the Market section
+
+  useEffect(() => {
+    const t = setInterval(() => setMarketOpen(marketOpenNow()), 30_000);
+    const onConn = (e) => setDhan(e.detail);
+    window.addEventListener('stockhits:conn', onConn);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('stockhits:conn', onConn);
+    };
+  }, []);
+  useEffect(() => setDrawer(false), [section.id, tab]);
+  useEffect(() => {
+    document.title = `${section.tabs.find((t) => t[0] === tab)[1]} · ${section.label} · Stock Hits`;
+  }, [section, tab]);
+
+  const toggleCollapsed = () =>
+    setCollapsed((c) => {
+      try {
+        localStorage.setItem(NAV_KEY, c ? '0' : '1');
+      } catch {}
+      return !c;
+    });
+
+  const current = section.tabs.find((t) => t[0] === tab);
+
+  return (
+    <div className={`shell ${collapsed ? 'nav-collapsed' : ''} ${drawer ? 'drawer-open' : ''}`}>
+      {/* Phone top bar */}
+      <header className="mobilebar">
+        <button className="icon-btn nav-burger" onClick={() => setDrawer(true)} aria-label="Open menu">
+          <Icon name="menu" />
+        </button>
+        <span className="brand-name">Stock Hits</span>
+        <span className="mobilebar-section">{section.label}</span>
+      </header>
+      <div className="nav-scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
+
+      <aside className="sidenav" aria-label="Main menu">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            <Icon name="logo" />
+          </span>
+          <span className="brand-name">Stock Hits</span>
+          <button className="icon-btn nav-close" onClick={() => setDrawer(false)} aria-label="Close menu">×</button>
+        </div>
+
+        <nav className="sidenav-list">
+          {SECTIONS.map((s) => (
+            <a
+              key={s.id}
+              href={`#/${s.id}/${s.tabs[0][0]}`}
+              className={`sidenav-item ${s.id === section.id ? 'active' : ''}`}
+              aria-current={s.id === section.id ? 'page' : undefined}
+              title={collapsed ? s.label : undefined}
+            >
+              <Icon name={s.icon} />
+              <span className="sidenav-label">{s.label}</span>
+            </a>
+          ))}
+        </nav>
+
+        <div className="sidenav-foot">
+          <div className={`nav-status ${marketOpen ? 'ok' : ''}`} title="NSE session 09:15–15:30 IST, Mon–Fri">
+            <i />
+            <span className="sidenav-label">{marketOpen ? 'Market open' : 'Market closed'}</span>
+          </div>
+          {dhan && (
+            <a
+              href="#/market/connection"
+              className={`nav-status ${dhan.ok ? 'ok' : 'bad'}`}
+              title={dhan.ok ? 'Dhan connected' : 'Dhan needs attention'}
+            >
+              <i />
+              <span className="sidenav-label">
+                {dhan.ok ? 'Dhan connected' : 'Dhan needs attention'}
+                {dhan.ok && dhan.left && <small>Token: {dhan.left}</small>}
+              </span>
+            </a>
+          )}
+          <button className="sidenav-collapse" onClick={toggleCollapsed} aria-label={collapsed ? 'Expand menu' : 'Collapse menu'}>
+            <Icon name={collapsed ? 'expand' : 'collapse'} />
+            <span className="sidenav-label">Collapse menu</span>
+          </button>
+        </div>
+      </aside>
+
+      <main className="main">
+        <div className="pagehead">
+          <div className="pagehead-row">
+            <div className="pagehead-titles">
+              <h1>{section.label}</h1>
+              <p className="sub">{current[2]}</p>
+            </div>
+            <div className="pagehead-actions" ref={setActionsEl} />
+          </div>
+          <nav className="subnav" aria-label={`${section.label} pages`}>
+            {section.tabs.map(([id, label]) => (
+              <a key={id} href={`#/${section.id}/${id}`} className={id === tab ? 'active' : ''} aria-current={id === tab ? 'page' : undefined}>
+                {label}
+              </a>
+            ))}
+          </nav>
+        </div>
+
+        <div className="content">
+          {section.id === 'signals' && <Signals tab={tab} actionsEl={actionsEl} />}
+          {section.id === 'market' && <Ticker subview={tab} actionsEl={actionsEl} />}
+          {section.id === 'paper' && <Pnl subview={tab} />}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// Small inline icons (no icon library needed)
+function Icon({ name }) {
+  const p = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true };
+  switch (name) {
+    case 'signal':
+      return (
+        <svg {...p}>
+          <path d="M3 12h4l3-7 4 14 3-7h4" />
+        </svg>
+      );
+    case 'candles':
+      return (
+        <svg {...p}>
+          <path d="M6 3v3M6 15v6M12 2v5M12 14v3M18 5v4M18 16v5" />
+          <rect x="4" y="6" width="4" height="9" rx="1" />
+          <rect x="10" y="7" width="4" height="7" rx="1" />
+          <rect x="16" y="9" width="4" height="7" rx="1" />
+        </svg>
+      );
+    case 'wallet':
+      return (
+        <svg {...p}>
+          <rect x="3" y="6" width="18" height="14" rx="2.5" />
+          <path d="M3 10h18M16 15h2M7 6V4.5h10V6" />
+        </svg>
+      );
+    case 'menu':
+      return (
+        <svg {...p}>
+          <path d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      );
+    case 'collapse':
+      return (
+        <svg {...p}>
+          <path d="M15 6l-6 6 6 6" />
+        </svg>
+      );
+    case 'expand':
+      return (
+        <svg {...p}>
+          <path d="M9 6l6 6-6 6" />
+        </svg>
+      );
+    case 'logo':
+      return (
+        <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M6 22l6-7 5 4 9-11" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    default:
+      return null;
+  }
 }
