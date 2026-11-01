@@ -751,3 +751,29 @@ table.journal th button { white-space: nowrap; }
 @media (max-width: 1100px) { .jr-cols { grid-template-columns: minmax(0, 1fr); } }
 .jr-fills { overflow-x: auto; min-width: 0; }
 .jr-notes { min-width: 0; }
+
+/* Stop loss / take profit on the chart */
+.tk-exit-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.btn.exit-add { padding: 4px 11px; font-size: 13px; font-weight: 600; }
+.btn.exit-add.SL { color: #dc2626; border-color: color-mix(in srgb, #dc2626 45%, var(--border)); }
+.btn.exit-add.TP { color: #16a34a; border-color: color-mix(in srgb, #16a34a 45%, var(--border)); }
+.exit-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 9px; border-radius: 8px; border: 1px solid; }
+.exit-chip.SL { border-color: color-mix(in srgb, #dc2626 50%, transparent); background: color-mix(in srgb, #dc2626 8%, transparent); }
+.exit-chip.TP { border-color: color-mix(in srgb, #16a34a 50%, transparent); background: color-mix(in srgb, #16a34a 8%, transparent); }
+.exit-chip > b { font-size: 12px; }
+.exit-chip.SL > b { color: #dc2626; } .exit-chip.TP > b { color: #16a34a; }
+.exit-chip input { width: 92px; font: inherit; font-family: var(--mono); font-size: 13px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.exit-pnl { font-size: 12.5px; min-width: 60px; }
+.exit-pnl.pos { color: var(--pos); } .exit-pnl.neg { color: var(--neg); }
+.exit-x { all: unset; cursor: pointer; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); font-size: 16px; }
+.exit-x:hover { background: var(--surface-2); color: var(--text); }
+.tk-exit-hint { color: var(--muted); font-size: 12.5px; }
+.tk-chart-box.dragging { cursor: ns-resize !important; }
+@media (prefers-color-scheme: dark) { .exit-chip.SL > b, .btn.exit-add.SL { color: #f87171; } .exit-chip.TP > b, .btn.exit-add.TP { color: #4ade80; } }
+.exit-tag { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-left: 6px; white-space: nowrap; }
+.exit-tag.SL { color: #dc2626; background: color-mix(in srgb, #dc2626 10%, transparent); }
+.exit-tag.TP { color: #16a34a; background: color-mix(in srgb, #16a34a 10%, transparent); }
+.pos-exits { margin-top: 3px; align-items: center; }
+.pos-exits .exit-tag:first-child { margin-left: 0; }
+.pos-exits .link { font-size: 12px; }
+@media (prefers-color-scheme: dark) { .exit-tag.SL { color: #f87171; } .exit-tag.TP { color: #4ade80; } }

@@ -8,6 +8,10 @@ import { api, describe, kindOf, price, segLabel, signed, store } from './Ticker.
 // candle moves live with the Ticker's price feed. Optional EMA crossover:
 // fast (solid) and slow (dashed) EMA lines with Bull / Bear markers where they
 // cross; crossings are marked on completed candles only.
+//
+// With an open paper position: an Entry line plus draggable Stop loss / Take
+// profit lines. Drag a line and drop it; the level is saved on the server,
+// which closes the whole position when the price reaches it.
 
 const INTERVALS = [3, 5];
 const INTERVAL_KEY = 'stockhits.chartInterval';
@@ -34,7 +38,12 @@ const prefersDark = () => typeof window !== 'undefined' && window.matchMedia?.('
 const shift = (c) => ({ ...c, time: c.time + IST_OFFSET }); // the chart shows UTC; shift so axes read IST
 const compactVol = (v) => (v >= 1e7 ? `${(v / 1e7).toFixed(2)}Cr` : v >= 1e5 ? `${(v / 1e5).toFixed(2)}L` : v >= 1e3 ? `${(v / 1e3).toFixed(1)}K` : String(v));
 
-export default function Chart({ secret, row, quote, marketOpen, onClose, position, onExit }) {
+const EXIT_COLORS = { SL: '#dc2626', TP: '#16a34a', ENTRY: '#64748b' };
+const EXIT_NAME = { SL: 'Stop loss', TP: 'Take profit' };
+const tick = (v) => Math.round(v * 20) / 20; // ₹0.05 steps
+const GRAB_PX = 8; // how close the pointer must be to a line to grab it
+
+export default function Chart({ secret, row, quote, marketOpen, onClose, position, onExit, exits = null, onSetExit }) {
   const [minutes, setMinutes] = useState(() => (Number(store.get(INTERVAL_KEY)) === 5 ? 5 : 3));
   const [oneMin, setOneMin] = useState(null);
   const [error, setError] = useState('');
@@ -55,6 +64,22 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
   emaCfgRef.current = emaCfg;
   const marketOpenRef = useRef(marketOpen);
   marketOpenRef.current = marketOpen;
+
+  // ---- stop loss / take profit levels (null = not set)
+  const [levels, setLevels] = useState({ SL: exits?.SL ?? null, TP: exits?.TP ?? null });
+  const [exitMsg, setExitMsg] = useState(null); // { kind, text }
+  const [savingExit, setSavingExit] = useState('');
+  const levelsRef = useRef(levels);
+  levelsRef.current = levels;
+  const posRef = useRef(position);
+  posRef.current = position;
+  const dragRef = useRef(null); // { k, start }
+  const linesRef = useRef({});
+  // Follow the server (e.g. a level set elsewhere, or removed after it filled), except mid-drag
+  useEffect(() => {
+    if (dragRef.current || savingExit) return;
+    setLevels({ SL: exits?.SL ?? null, TP: exits?.TP ?? null });
+  }, [exits?.SL, exits?.TP]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Theme follows the system setting
   useEffect(() => {
@@ -109,6 +134,21 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
       wickDownColor: p.down,
       borderVisible: false,
       priceLineVisible: true,
+      // keep entry / stop loss / take profit lines in view (while dragging, use where the drag started so the scale doesn't run away)
+      autoscaleInfoProvider: (original) => {
+        const res = original();
+        const pos = posRef.current;
+        if (!res || !pos) return res;
+        const lv = { ...levelsRef.current };
+        if (dragRef.current) lv[dragRef.current.k] = dragRef.current.start;
+        let { minValue, maxValue } = res.priceRange;
+        for (const v of [pos.avg, lv.SL, lv.TP]) {
+          if (v == null) continue;
+          minValue = Math.min(minValue, v);
+          maxValue = Math.max(maxValue, v);
+        }
+        return { ...res, priceRange: { minValue, maxValue } };
+      },
     });
     const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
@@ -129,6 +169,7 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
     return () => {
       chart.remove();
       chartRef.current = null;
+      linesRef.current = {}; // the lines belonged to the removed chart
     };
   }, []);
 
@@ -223,6 +264,149 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
     drawEma(true);
   }, [emaCfg]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // P&L of the whole open position if it exits at price v
+  const pnlAt = (v) => (position && v != null ? (v - position.avg) * position.qty : null);
+  const pnlLabel = (v) => {
+    const x = pnlAt(v);
+    return x == null ? '' : `${x >= 0 ? '+' : '−'}₹${price.format(Math.abs(x))}`;
+  };
+
+  // Price lines: entry, stop loss, take profit
+  function drawExitLines() {
+    const s = seriesRef.current.candles;
+    if (!s) return;
+    const pos = posRef.current;
+    const lv = levelsRef.current;
+    const want = { ENTRY: pos ? pos.avg : null, SL: pos ? lv.SL : null, TP: pos ? lv.TP : null };
+    for (const k of ['ENTRY', 'SL', 'TP']) {
+      const v = want[k];
+      const line = linesRef.current[k];
+      if (v == null) {
+        if (line) s.removePriceLine(line);
+        delete linesRef.current[k];
+        continue;
+      }
+      const x = pos && k !== 'ENTRY' ? (v - pos.avg) * pos.qty : null;
+      const opts = {
+        price: v,
+        color: EXIT_COLORS[k],
+        lineWidth: k === 'ENTRY' ? 1 : 2,
+        lineStyle: k === 'ENTRY' ? LineStyle.Dotted : LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: k === 'ENTRY' ? 'Entry' : `${k} ${x == null ? '' : `${x >= 0 ? '+' : '−'}${price.format(Math.abs(x))}`}`,
+      };
+      if (line) line.applyOptions(opts);
+      else linesRef.current[k] = s.createPriceLine(opts);
+    }
+  }
+  useEffect(drawExitLines, [levels, position?.avg, position?.qty]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveExit = async (k, v, revertTo) => {
+    setSavingExit(k);
+    setExitMsg({ kind: 'busy', text: 'Saving…' });
+    try {
+      await onSetExit(k, v);
+      const pos = posRef.current;
+      setExitMsg({
+        kind: 'ok',
+        text:
+          v == null
+            ? `${EXIT_NAME[k]} removed.`
+            : `${EXIT_NAME[k]} at ₹${price.format(v)} — closes all ${Math.abs(pos?.qty || 0)} if the price ${(k === 'SL') === (pos?.qty > 0) ? 'falls' : 'rises'} to it (${pnlLabel(v)}).`,
+      });
+    } catch (e) {
+      setLevels((l) => ({ ...l, [k]: revertTo }));
+      setExitMsg({ kind: 'err', text: e.message });
+    } finally {
+      setSavingExit('');
+    }
+  };
+  const saveExitRef = useRef(saveExit);
+  saveExitRef.current = saveExit;
+
+  // A default level 1% (stop loss) / 2% (take profit) away from the price
+  const addExit = (k) => {
+    const ltp = quote?.ltp ?? position.avg;
+    const long = position.qty > 0;
+    const pct = k === 'SL' ? (long ? -0.01 : 0.01) : long ? 0.02 : -0.02;
+    const v = tick(ltp * (1 + pct));
+    setLevels((l) => ({ ...l, [k]: v }));
+    saveExit(k, v, null);
+  };
+
+  // Drag and drop the SL / TP lines
+  useEffect(() => {
+    const el = box.current;
+    const chart = chartRef.current;
+    if (!el || !chart) return;
+    const s = () => seriesRef.current.candles;
+    const yOf = (e) => e.clientY - el.getBoundingClientRect().top;
+    const near = (y) => {
+      if (!posRef.current) return null;
+      let best = null;
+      for (const k of ['SL', 'TP']) {
+        const v = levelsRef.current[k];
+        if (v == null) continue;
+        const ly = s().priceToCoordinate(v);
+        const d = ly == null ? Infinity : Math.abs(ly - y);
+        if (d <= GRAB_PX && (!best || d < best.d)) best = { k, d };
+      }
+      return best?.k || null;
+    };
+    const down = (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      const k = near(yOf(e));
+      if (!k) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragRef.current = { k, start: levelsRef.current[k] };
+      chart.applyOptions({ handleScroll: false, handleScale: false });
+      el.classList.add('dragging');
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {}
+    };
+    const move = (e) => {
+      const y = yOf(e);
+      const d = dragRef.current;
+      if (!d) {
+        el.style.cursor = near(y) ? 'ns-resize' : '';
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      const p = s().coordinateToPrice(y);
+      if (p == null || p <= 0) return;
+      const v = tick(p);
+      if (v === levelsRef.current[d.k]) return;
+      levelsRef.current = { ...levelsRef.current, [d.k]: v };
+      drawExitLines();
+      setLevels(levelsRef.current);
+    };
+    const up = (e) => {
+      const d = dragRef.current;
+      if (!d) return;
+      dragRef.current = null;
+      chart.applyOptions({ handleScroll: true, handleScale: true });
+      el.classList.remove('dragging');
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch {}
+      const v = levelsRef.current[d.k];
+      if (v !== d.start) saveExitRef.current(d.k, v, d.start);
+    };
+    el.addEventListener('pointerdown', down, true);
+    el.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+    return () => {
+      el.removeEventListener('pointerdown', down, true);
+      el.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', up, true);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const applyDraft = (draft) => {
     const f = parseInt(draft.fast, 10);
     const sl = parseInt(draft.slow, 10);
@@ -293,6 +477,34 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
           <button className="btn btn-close" onClick={onClose}>Close chart</button>
         </div>
       </div>
+      {position && onSetExit && (
+        <div className="tk-exit-bar">
+          {['SL', 'TP'].map((k) => (
+            <ExitChip
+              key={k}
+              k={k}
+              value={levels[k]}
+              pnl={pnlLabel(levels[k])}
+              busy={savingExit === k}
+              onAdd={() => addExit(k)}
+              onSet={(v) => {
+                const before = levels[k];
+                setLevels((l) => ({ ...l, [k]: v }));
+                saveExit(k, v, before);
+              }}
+              onRemove={() => {
+                const before = levels[k];
+                setLevels((l) => ({ ...l, [k]: null }));
+                saveExit(k, null, before);
+              }}
+            />
+          ))}
+          <span className="tk-exit-hint">
+            {levels.SL != null || levels.TP != null ? 'Drag the dashed lines on the chart to move them.' : 'Add a level, then drag its line on the chart.'}
+          </span>
+          {exitMsg && exitMsg.kind !== 'busy' && <span className={`status ${exitMsg.kind}`}>{exitMsg.text}</span>}
+        </div>
+      )}
       <div className="tk-ema-bar">
         <label className="switch">
           <input type="checkbox" checked={emaCfg.on} onChange={(e) => setEmaCfg((c) => ({ ...c, on: e.target.checked }))} />
@@ -381,4 +593,43 @@ function trendText({ fast, slow }, cfg) {
   const s = slow?.[slow.length - 1];
   if (f == null || s == null) return `Not enough candles yet for EMA ${cfg.slow}`;
   return f > s ? `EMA ${cfg.fast} above ${cfg.slow} — bullish` : f < s ? `EMA ${cfg.fast} below ${cfg.slow} — bearish` : `EMA ${cfg.fast} = ${cfg.slow}`;
+}
+
+/** "+ Stop loss" button, or the level with an editable price and a remove button. */
+function ExitChip({ k, value, pnl, busy, onAdd, onSet, onRemove }) {
+  const [draft, setDraft] = useState(null); // text while typing
+  if (value == null) {
+    return (
+      <button className={`btn exit-add ${k}`} onClick={onAdd} disabled={busy}>
+        + {EXIT_NAME[k]}
+      </button>
+    );
+  }
+  const commit = () => {
+    if (draft == null) return;
+    const v = tick(Number(draft));
+    setDraft(null);
+    if (v > 0 && v !== value) onSet(v);
+  };
+  return (
+    <span className={`exit-chip ${k}`}>
+      <b>{k}</b>
+      <input
+        type="number"
+        step="any"
+        min="0.05"
+        value={draft ?? String(value)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') setDraft(null);
+        }}
+        aria-label={`${EXIT_NAME[k]} price`}
+        disabled={busy}
+      />
+      <span className={`mono exit-pnl ${pnl.startsWith('+') ? 'pos' : 'neg'}`}>{busy ? 'saving…' : pnl}</span>
+      <button className="exit-x" onClick={onRemove} disabled={busy} aria-label={`Remove ${EXIT_NAME[k]}`} title={`Remove ${EXIT_NAME[k]}`}>×</button>
+    </span>
+  );
 }

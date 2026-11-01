@@ -20,11 +20,18 @@ export function whenText(iso) {
 }
 const fmt = (v) => (v == null ? '…' : `₹${price.format(v)}`);
 const dirWord = (o) => (o.direction === 'up' ? 'rises to' : 'falls to');
-export const orderLabel = (o) => `${o.side === 'BUY' ? 'Buy' : 'Sell'} ${o.qty.toLocaleString('en-IN')} ${o.symbol} when price ${dirWord(o)} ₹${price.format(o.triggerPrice)}`;
+export const EXIT_LABEL = { SL: 'Stop loss', TP: 'Take profit' };
+const qtyText = (o) => (o.qty == null ? 'all' : o.qty.toLocaleString('en-IN'));
+export const orderLabel = (o) =>
+  o.kind
+    ? `${EXIT_LABEL[o.kind]} for ${o.symbol} at ₹${price.format(o.triggerPrice)}`
+    : `${o.side === 'BUY' ? 'Buy' : 'Sell'} ${qtyText(o)} ${o.symbol} when price ${dirWord(o)} ₹${price.format(o.triggerPrice)}`;
 
 /** Toast / message text for an order that just changed. */
 export function eventText(o) {
-  if (o.status === 'FILLED') return `${o.side === 'BUY' ? 'Bought' : 'Sold'} ${o.qty.toLocaleString('en-IN')} ${o.symbol} at ₹${price.format(o.fillPrice)} — your trigger ₹${price.format(o.triggerPrice)} was reached.`;
+  if (o.status === 'FILLED' && o.kind)
+    return `${EXIT_LABEL[o.kind]} hit: ${o.side === 'BUY' ? 'bought' : 'sold'} ${(o.filledQty ?? '').toLocaleString('en-IN')} ${o.symbol} at ₹${price.format(o.fillPrice)} (level ₹${price.format(o.triggerPrice)}). Position closed.`;
+  if (o.status === 'FILLED') return `${o.side === 'BUY' ? 'Bought' : 'Sold'} ${(o.filledQty ?? o.qty).toLocaleString('en-IN')} ${o.symbol} at ₹${price.format(o.fillPrice)} — your trigger ₹${price.format(o.triggerPrice)} was reached.`;
   if (o.status === 'FAILED') return `${o.side === 'BUY' ? 'Buy' : 'Sell'} ${o.symbol} at ₹${price.format(o.triggerPrice)} triggered but wasn't placed: ${o.error}`;
   if (o.status === 'EXPIRED') return `${o.side === 'BUY' ? 'Buy' : 'Sell'} ${o.symbol} at ₹${price.format(o.triggerPrice)} expired at market close without reaching the price.`;
   return orderLabel(o);
@@ -289,10 +296,11 @@ export function OrdersCard({ secret, orders, quotes, market, onChange }) {
                   <td className="mono" title={o.createdAt}>{whenText(o.createdAt).replace(' today', '')}</td>
                   <td>
                     <span className="sym">{o.symbol}</span>
+                    {o.kind && <span className={`exit-tag ${o.kind}`}>{EXIT_LABEL[o.kind]}</span>}
                     {o.refPrice != null && <div className="tk-sub"><span>First hit ₹{price.format(o.refPrice)}</span></div>}
                   </td>
                   <td><span className={`side-pill ${o.side === 'BUY' ? 'buy' : 'sell'}`}>{o.side}</span></td>
-                  <td className="num mono">{o.qty.toLocaleString('en-IN')}</td>
+                  <td className="num mono">{o.qty != null ? o.qty.toLocaleString('en-IN') : o.filledQty != null ? o.filledQty.toLocaleString('en-IN') : <span className="muted-cell" title="Closes the whole position">All</span>}</td>
                   <td className="num mono" title={o.direction === 'up' ? 'Fills when the price rises to this' : 'Fills when the price falls to this'}>
                     <span className="om-arrow">{o.direction === 'up' ? '↑' : '↓'}</span> {price.format(o.triggerPrice)}
                   </td>
@@ -304,10 +312,10 @@ export function OrdersCard({ secret, orders, quotes, market, onChange }) {
                   <td className="om-status-cell">
                     <span className={`om-status ${tone}`}>{label}</span>
                     <small className="muted-cell">
-                      {o.status === 'PENDING' && <> until {whenText(o.validUntil)}</>}
+                      {o.status === 'PENDING' && (o.validUntil ? <> until {whenText(o.validUntil)}</> : <> until the position is closed</>)}
                       {o.status === 'FILLED' && <> @ ₹{price.format(o.fillPrice)} · {whenText(o.filledAt)}</>}
                       {o.status === 'FAILED' && <> {o.error}</>}
-                      {(o.status === 'EXPIRED' || o.status === 'CANCELLED') && o.closedAt && <> {whenText(o.closedAt)}</>}
+                      {(o.status === 'EXPIRED' || o.status === 'CANCELLED') && o.closedAt && <> {whenText(o.closedAt)}{o.note ? ` · ${o.note}` : ''}</>}
                     </small>
                   </td>
                   <td className="tk-x">

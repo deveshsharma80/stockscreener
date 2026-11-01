@@ -27,6 +27,7 @@
 //      also adds the stock to the Ticker
 // POST {action:"cancel-order", id}
 // GET  ?action=check-orders                           check prices now (for an outside scheduler, e.g. every minute)
+// POST {action:"set-exit", key, kind:"SL"|"TP", price|null}   stop loss / take profit for an open position
 //
 // Trade journal (fills grouped into entry → exit trades, with your notes):
 // GET  ?action=journal                                trades + notes
@@ -35,7 +36,7 @@ import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { PRODUCTS, addTrade, checkFunds, computeBook, productFor, readAccount, readTrades, resetTrades, setCapital, validateOrder } from '../lib/paper.js';
 import { readNotes, roundTrips, saveNote } from '../lib/journal.js';
-import { cancelAllPending, cancelOrder, createOrder, ignoreHours, openKeys, processOrders, readOrders, sessionEnd } from '../lib/orders.js';
+import { cancelAllPending, cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import {
   DhanError,
   SEGMENTS,
@@ -120,6 +121,10 @@ export default async function handler(req, res) {
         const { order, rows, watchNote } = await placeTriggerOrder(body);
         return res.json({ ok: true, order, rows, watchNote, ...(await ordersView()) });
       }
+      case 'POST set-exit': {
+        const order = await placeExit(body);
+        return res.json({ ok: true, order, ...(await ordersView()) });
+      }
       case 'POST cancel-order': {
         const order = await cancelOrder(String(body.id || ''));
         return res.json({ ok: true, order, ...(await ordersView()) });
@@ -148,7 +153,9 @@ export default async function handler(req, res) {
         return res.json({ ok: true, ...(await paperBook()) });
       case 'POST trade': {
         const trade = await placePaperTrade({ key: body.key, side: body.side, qty: body.qty, product: body.product });
-        return res.json({ ok: true, trade, ...(await paperBook()) });
+        const book = await paperBook();
+        await tidyExits(book); // closed by hand → its SL / TP go away
+        return res.json({ ok: true, trade, ...book });
       }
       case 'POST paper-capital':
         await setCapital(body.amount);
@@ -318,9 +325,20 @@ async function checkOrders({ quotes: known = {}, fresh = false } = {}) {
       marketOpen: marketStatus().open,
       fetchQuotes: async (keys) =>
         getQuotes(keys.map((k) => KEY_RE.exec(k)).filter(Boolean).map((m) => ({ segment: m[1], securityId: m[2] }))),
-      fill: (o) => placePaperTrade({ key: o.key, side: o.side, qty: o.qty, product: ORDER_PRODUCT, orderId: o.id }),
+      fill: async (o) => {
+        if (!isExit(o)) return placePaperTrade({ key: o.key, side: o.side, qty: o.qty, product: ORDER_PRODUCT, orderId: o.id });
+        // Stop loss / take profit: close whatever is open right now
+        const pos = (await paperBook()).positions.find((p) => p.key === o.key && p.qty !== 0);
+        if (!pos || (o.side === 'SELL') !== pos.qty > 0) throw Object.assign(new Error('Position was already closed'), { cancelled: true });
+        return placePaperTrade({ key: o.key, side: o.side, qty: Math.abs(pos.qty), product: pos.product, orderId: o.id });
+      },
       findTrade: async (id) => (await readTrades()).find((t) => t.orderId === id) || null,
     });
+    // One-cancels-other: an exit filled (or the position closed) → drop the other exit
+    if (r.events.some((e) => e.status === 'FILLED')) {
+      const gone = await tidyExits(await paperBook());
+      r.events.push(...gone.map((o) => ({ ...o, quiet: true }))); // refresh lists, no pop-up
+    }
     const active = r.pending > 0 && (marketStatus().open || ignoreHours());
     return { ...r, checkEveryMs: active ? 10_000 : 60_000 };
   } catch (err) {
@@ -420,4 +438,43 @@ async function placeTriggerOrder(body) {
     source: body.source,
   });
   return { order, rows, watchNote };
+}
+
+// ------------------------------------------------------------------ stop loss / take profit
+
+async function tidyExits(book) {
+  try {
+    return await cancelOrphanExits(new Map(book.positions.filter((p) => p.qty !== 0).map((p) => [p.key, p.qty])));
+  } catch {
+    return [];
+  }
+}
+
+async function placeExit(body) {
+  const key = String(body.key || '');
+  const kind = String(body.kind || '').toUpperCase();
+  if (!KEY_RE.test(key)) throw new HttpError(400, 'Unknown instrument');
+  if (kind !== 'SL' && kind !== 'TP') throw new HttpError(400, 'kind must be SL or TP');
+  const remove = body.price === null || body.price === undefined || body.price === '';
+  const level = remove ? null : Math.round(Number(body.price) * 100) / 100;
+  if (!remove && !(level > 0 && level < 1e7)) throw new HttpError(400, 'Enter a valid price');
+
+  const pos = (await paperBook()).positions.find((p) => p.key === key && p.qty !== 0);
+  if (!pos) throw new HttpError(400, 'There is no open position to protect. Buy or sell first.');
+  const name = kind === 'SL' ? 'Stop loss' : 'Take profit';
+  if (!remove) {
+    const ltp = (await getFillQuote(pos)).ltp;
+    const long = pos.qty > 0;
+    const below = level < ltp;
+    const wantBelow = (kind === 'SL') === long; // long SL / short TP sit below the price
+    if (below !== wantBelow) {
+      const f = (v) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+      throw new HttpError(
+        400,
+        `${name} for a ${long ? 'long (bought)' : 'short (sold)'} position must be ${wantBelow ? 'below' : 'above'} the current price ₹${f(ltp)}.`,
+        { kind: 'rules' }
+      );
+    }
+  }
+  return setExit({ inst: pos, kind, price: level, pos });
 }

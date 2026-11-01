@@ -916,7 +916,7 @@ function OrderToasts() {
   useEffect(() => {
     const seen = new Set();
     const on = (e) => {
-      const fresh = (e.detail?.events || []).filter((o) => !seen.has(`${o.id}:${o.status}`));
+      const fresh = (e.detail?.events || []).filter((o) => !o.quiet && !seen.has(`${o.id}:${o.status}`));
       if (!fresh.length) return;
       fresh.forEach((o) => seen.add(`${o.id}:${o.status}`));
       setItems((list) => [...list, ...fresh.map((o) => ({ key: `${o.id}:${o.status}`, o }))].slice(-4));

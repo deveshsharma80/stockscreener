@@ -238,6 +238,7 @@ export function OrderButtons({ symbol, refPrice }) {
 }
 
 function OrderChip({ o }) {
+  if (o.kind && o.status === 'CANCELLED') return null;
   const tone = o.status === 'FILLED' ? 'filled' : o.status === 'FAILED' ? 'failed' : o.status === 'EXPIRED' ? 'muted' : 'pending';
   const text =
     o.status === 'FILLED'
@@ -246,7 +247,9 @@ function OrderChip({ o }) {
         ? 'Not placed'
         : o.status === 'EXPIRED'
           ? 'Expired'
-          : `${o.side === 'BUY' ? 'Buy' : 'Sell'} ${o.direction === 'up' ? '↑' : '↓'}${price.format(o.triggerPrice)}`;
+          : o.kind
+            ? `${o.kind} ${price.format(o.triggerPrice)}`
+            : `${o.side === 'BUY' ? 'Buy' : 'Sell'} ${o.direction === 'up' ? '↑' : '↓'}${price.format(o.triggerPrice)}`;
   return (
     <a className={`om-status ${tone} ob-chip`} href="#/market/orders" title={eventText(o)} onClick={(e) => e.stopPropagation()}>
       {text}

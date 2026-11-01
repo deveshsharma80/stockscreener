@@ -270,6 +270,23 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
     return j.trade;
   };
 
+  // ---- stop loss / take profit (exit orders on an open position)
+  const exitsByKey = useMemo(() => {
+    const m = new Map();
+    for (const o of orders) {
+      if (!o.kind || o.status !== 'PENDING') continue;
+      if (!m.has(o.key)) m.set(o.key, { SL: null, TP: null });
+      m.get(o.key)[o.kind] = o.triggerPrice;
+    }
+    return m;
+  }, [orders]);
+  const setExit = async (key, kind, level) => {
+    const j = await api(secret, 'set-exit', { method: 'POST', body: { key, kind, price: level } });
+    setOrders(j.orders);
+    emitOrders({ orders: j.orders });
+    return j.order;
+  };
+
   // ---- view
   const counts = useMemo(() => {
     const c = { all: rows.length, eq: 0, fno: 0, idx: 0 };
@@ -490,6 +507,8 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
             onClose={() => setChartKey(null)}
             position={positions.find((p) => p.key === chartKey && p.qty !== 0) || null}
             onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))}
+            exits={exitsByKey.get(chartKey) || null}
+            onSetExit={(kind, level) => setExit(chartKey, kind, level)}
           />
         </Suspense>
       )}
@@ -500,7 +519,17 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
       {subview === 'orders' && <OrdersCard secret={secret} orders={orders} quotes={quotes} market={market} onChange={setOrders} />}
 
       {subview === 'positions' && (
-        <PositionsCard book={book} quotes={quotes} onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))} />
+        <PositionsCard
+          book={book}
+          quotes={quotes}
+          exits={exitsByKey}
+          onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))}
+          onChart={(key) => {
+            setChartKey(key);
+            window.location.hash = '#/market/watchlist';
+            setTimeout(() => document.querySelector('.tk-chart')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+          }}
+        />
       )}
     </>
   );
@@ -717,7 +746,7 @@ function TradeTicket({ row, initialSide, onPlace, onClose, pct, account, product
 
 // ------------------------------------------------------------------ positions
 
-function PositionsCard({ book, quotes, onExit }) {
+function PositionsCard({ book, quotes, onExit, exits, onChart }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState(null);
   const list = (book?.positions || []).map((p) => {
@@ -798,6 +827,15 @@ function PositionsCard({ book, quotes, onExit }) {
                       {!p.qty && <span>Closed</span>}
                       {p.carried && <span className="tk-carried" title="Intraday positions should be closed the same day">Not squared off</span>}
                     </div>
+                    {p.qty !== 0 && (
+                      <div className="tk-sub pos-exits">
+                        {exits?.get(p.key)?.SL != null && <span className="exit-tag SL">SL {price.format(exits.get(p.key).SL)}</span>}
+                        {exits?.get(p.key)?.TP != null && <span className="exit-tag TP">TP {price.format(exits.get(p.key).TP)}</span>}
+                        <button className="link" onClick={() => onChart(p.key)}>
+                          {exits?.get(p.key) ? 'Edit SL / TP on chart' : 'Set SL / TP on chart'}
+                        </button>
+                      </div>
+                    )}
                   </td>
                   <td className="num mono">
                     {p.qty ? <b className={p.qty > 0 ? 'long' : 'short'}>{p.qty > 0 ? `+${p.qty}` : p.qty}</b> : '0'}
