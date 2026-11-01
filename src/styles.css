@@ -696,3 +696,58 @@ table.orders .btn.btn-close { padding: 4px 10px; font-size: 12.5px; }
 .toast.ok { border-left-color: var(--pos); }
 .toast.bad { border-left-color: var(--danger); }
 .toast-actions { display: inline-flex; gap: 10px; white-space: nowrap; }
+
+/* Trades (journal) */
+table.journal th { padding: 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
+table.journal th:first-child { padding-left: 16px; }
+table.journal td { vertical-align: middle; }
+.jr-leg { white-space: nowrap; }
+.jr-leg > span, .jr-leg > small { display: block; }
+.jr-leg small { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.jr-src { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; color: #b45309; border: 1px solid color-mix(in srgb, #f59e0b 40%, transparent); margin-left: 6px; }
+@media (prefers-color-scheme: dark) { .jr-src { color: #fcd34d; } }
+.jr-note-h { min-width: 180px; }
+.jr-note-cell { max-width: 260px; }
+.jr-note-text { all: unset; cursor: text; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; line-height: 1.35; white-space: normal; color: var(--text); }
+.jr-note-text:hover { color: var(--accent); }
+.btn.jr-add { padding: 3px 10px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.caret-cell { width: 1%; padding-right: 14px; }
+.stat-value.jr-bw { display: flex; gap: 12px; font-size: 18px; }
+.jr-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.jr-pager { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.jr-pager .btn { padding: 4px 10px; font-size: 13px; }
+.jr-pager .select { padding: 3px 6px; }
+
+.jr-detail { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 14px; cursor: default; }
+.jr-facts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.jr-fact { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+.jr-fact-l { font-size: 11px; color: var(--muted); }
+.jr-fact-v { font-size: 13px; font-weight: 600; margin-top: 2px; }
+.jr-fact-s { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.jr-fact-v.pos { color: var(--pos); } .jr-fact-v.neg { color: var(--neg); }
+.jr-cols { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.jr-cols h4 { margin: 0 0 8px; font-size: 13px; }
+.jr-fills table { width: 100%; font-size: 13px; }
+.jr-fills th { position: static; padding: 6px 8px; font-size: 12px; color: var(--muted); font-weight: 600; text-align: left; }
+.jr-fills th.num { text-align: right; }
+.jr-fills td { padding: 6px 8px; }
+.jr-notes textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; line-height: 1.45; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); resize: vertical; margin-top: 8px; }
+.jr-notes textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.jr-note-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.jr-note-actions small { margin-right: auto; }
+.jr-note-body { margin: 0; white-space: pre-wrap; font-size: 14px; line-height: 1.5; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+.jr-note-empty { color: var(--muted); font-size: 13px; }
+@media (max-width: 1100px) { .jr-facts { grid-template-columns: repeat(3, 1fr); } .jr-cols { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .jr-facts { grid-template-columns: repeat(2, 1fr); } tr.detail > td { padding-left: 12px; } }
+.jr-day { white-space: nowrap; }
+/* keep the expanded trade panel inside the visible card while the table scrolls sideways */
+table.journal tr.detail > td { padding: 0 0 14px !important; }
+.jr-detail { position: sticky; left: 12px; box-sizing: border-box; width: calc(100vw - var(--nav-w) - 96px); max-width: 1180px; margin: 0 12px; }
+.nav-collapsed .jr-detail { width: calc(100vw - var(--nav-w-collapsed) - 96px); }
+table.journal th button { white-space: nowrap; }
+.jr-note-cell { max-width: 200px; }
+.stat-value.jr-bw { flex-wrap: wrap; gap: 4px 12px; }
+@media (max-width: 900px) { .jr-detail { width: calc(100vw - 56px); left: 8px; margin: 0 8px; } .stat-value.jr-bw { font-size: 16px; } }
+@media (max-width: 1100px) { .jr-cols { grid-template-columns: minmax(0, 1fr); } }
+.jr-fills { overflow-x: auto; min-width: 0; }
+.jr-notes { min-width: 0; }

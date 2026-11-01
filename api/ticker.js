@@ -27,9 +27,14 @@
 //      also adds the stock to the Ticker
 // POST {action:"cancel-order", id}
 // GET  ?action=check-orders                           check prices now (for an outside scheduler, e.g. every minute)
+//
+// Trade journal (fills grouped into entry → exit trades, with your notes):
+// GET  ?action=journal                                trades + notes
+// POST {action:"journal-note", id, note}              save a note ("" deletes it)
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { PRODUCTS, addTrade, checkFunds, computeBook, productFor, readAccount, readTrades, resetTrades, setCapital, validateOrder } from '../lib/paper.js';
+import { readNotes, roundTrips, saveNote } from '../lib/journal.js';
 import { cancelAllPending, cancelOrder, createOrder, ignoreHours, openKeys, processOrders, readOrders, sessionEnd } from '../lib/orders.js';
 import {
   DhanError,
@@ -99,6 +104,16 @@ export default async function handler(req, res) {
         return res.json({ ok: true, orders: await checkOrders({ fresh: true }), market: marketStatus(), at: new Date().toISOString() });
       case 'GET orders':
         return res.json({ ok: true, ...(await ordersView()) });
+      case 'GET journal': {
+        const [trades, notes] = await Promise.all([readTrades(), readNotes()]);
+        return res.json({ ok: true, trips: roundTrips(trades), notes, market: marketStatus() });
+      }
+      case 'POST journal-note': {
+        const id = String(body.id || '');
+        if (!roundTrips(await readTrades()).some((t) => t.id === id)) throw new HttpError(404, 'That trade no longer exists');
+        const note = await saveNote(id, body.note);
+        return res.json({ ok: true, id, note });
+      }
       case 'GET resolve':
         return res.json({ ok: true, ...(await resolveForOrder(req.query || {})) });
       case 'POST place-order': {

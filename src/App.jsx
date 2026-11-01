@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Screener from './Screener.jsx';
 import Ticker from './Ticker.jsx';
 import Pnl from './Pnl.jsx';
+import Journal from './Journal.jsx';
 import FirstHits from './FirstHits.jsx';
 import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
 import { SECRET_KEY as TICKER_SECRET, api as tickerApi, store as tickerStore } from './Ticker.jsx';
@@ -35,13 +36,22 @@ export const SECTIONS = [
     ],
   },
   {
+    id: 'trades',
+    label: 'Trades',
+    icon: 'journal',
+    tabs: [
+      ['all', 'All trades', 'Every trade from entry to exit: timing, P&L and your journal notes'],
+      ['notes', 'With notes', 'Trades you’ve written journal notes on'],
+    ],
+  },
+  {
     id: 'paper',
     label: 'Paper Trading',
     icon: 'wallet',
     tabs: [
       ['overview', 'Overview', 'Paper account, today’s and this week’s P&L by trade type'],
       ['reports', 'Reports', 'Daily and weekly P&L after brokerage'],
-      ['trades', 'Trades', 'Every paper trade, with brokerage and P&L'],
+      ['trades', 'Fills', 'Every Buy / Sell fill, with brokerage and P&L'],
     ],
   },
 ];
@@ -849,6 +859,7 @@ export default function App() {
         <div className="content">
           {section.id === 'signals' && <Signals tab={tab} actionsEl={actionsEl} />}
           {section.id === 'market' && <Ticker subview={tab} actionsEl={actionsEl} />}
+          {section.id === 'trades' && <Journal subview={tab} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
         </div>
       </main>
@@ -963,6 +974,13 @@ function Icon({ name }) {
         <svg {...p}>
           <rect x="3" y="6" width="18" height="14" rx="2.5" />
           <path d="M3 10h18M16 15h2M7 6V4.5h10V6" />
+        </svg>
+      );
+    case 'journal':
+      return (
+        <svg {...p}>
+          <path d="M6 3h11a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6z" />
+          <path d="M6 3v18M9.5 8h6M9.5 12h6M9.5 16h3.5" />
         </svg>
       );
     case 'menu':
