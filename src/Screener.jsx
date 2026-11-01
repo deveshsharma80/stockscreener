@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import { AddToTicker } from './AddToTicker.jsx';
+import { price as num } from './Ticker.jsx';
 
-const num = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const pct = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2, signDisplay: 'exceptZero' });
 const dateTime = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 const fullDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });

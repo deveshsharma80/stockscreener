@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ORDERS_EVENT, OrdersCard, emitOrders } from './Orders.jsx';
 
 // The chart library is only downloaded when a chart is opened.
 const Chart = lazy(() => import('./Chart.jsx'));
@@ -23,10 +24,16 @@ const TABS = [
   ['idx', 'Index'],
 ];
 
-export const price = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Rupee amounts: no ".00" on whole numbers (₹1,262), two decimals otherwise (₹1,261.65)
+function rupeeFormat(opts = {}) {
+  const whole = new Intl.NumberFormat('en-IN', { ...opts, minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const paise = new Intl.NumberFormat('en-IN', { ...opts, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return { format: (v) => (Math.round(Math.abs(Number(v)) * 100) % 100 === 0 ? whole : paise).format(v) };
+}
+export const price = rupeeFormat();
 // +₹1,234.50 / −₹56.00
 export const money = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}₹${price.format(Math.abs(v))}`;
-export const signed = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' });
+export const signed = rupeeFormat({ signDisplay: 'exceptZero' });
 const two = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
 // Indian short form: 4.5K, 12.35L, 9.88Cr (browsers disagree on Intl's compact labels)
 const compact = {
@@ -119,16 +126,23 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
   const [book, setBook] = useState(null); // paper trading: positions, trades, reports
   const [ticket, setTicket] = useState(null); // { key, side } — open Buy/Sell ticket
   const [chartKey, setChartKey] = useState(null); // instrument whose candle chart is open
+  const [orders, setOrders] = useState([]); // trigger orders (Market › Orders)
 
   // Initial load: check secret, Dhan connection, the saved list and paper book.
   const loadAll = useCallback(async (s) => {
     setPageError('');
     try {
-      const [st, wl, pb] = await Promise.all([api(s, 'status', { params: { check: '1' } }), api(s, 'watchlist'), api(s, 'paper')]);
+      const [st, wl, pb, od] = await Promise.all([
+        api(s, 'status', { params: { check: '1' } }),
+        api(s, 'watchlist'),
+        api(s, 'paper'),
+        api(s, 'orders').catch(() => ({ orders: [] })),
+      ]);
       setConn(st);
       setMarket(st.market);
       setRows(wl.rows);
       setBook(pb);
+      setOrders(od.orders);
       setUnlocked(true);
       return true;
     } catch (e) {
@@ -172,9 +186,16 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
   // positions are always priced, even if removed from the watchlist.
   const positions = book?.positions || [];
   const posByKey = useMemo(() => new Map(positions.map((p) => [p.key, p])), [positions]);
+  // Orders placed elsewhere (First Hit popup, cancel)
+  useEffect(() => {
+    const on = (e) => e.detail?.orders && setOrders(e.detail.orders);
+    window.addEventListener(ORDERS_EVENT, on);
+    return () => window.removeEventListener(ORDERS_EVENT, on);
+  }, []);
+  const waitingKeys = orders.filter((o) => o.status === 'PENDING' || o.status === 'FILLING').map((o) => o.key);
   const keys = useMemo(
-    () => [...new Set([...rows.map((r) => r.key), ...positions.filter((p) => p.qty !== 0).map((p) => p.key)])].join(','),
-    [rows, positions]
+    () => [...new Set([...rows.map((r) => r.key), ...positions.filter((p) => p.qty !== 0).map((p) => p.key), ...waitingKeys])].join(','),
+    [rows, positions, waitingKeys.join(',')] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const stoppedFor = feedError && (feedError.kind === 'auth' || feedError.kind === 'plan') ? feedError.kind : null;
   const running = unlocked && conn?.connected && !paused && !hidden && keys && !stoppedFor;
@@ -193,6 +214,13 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
         setMarket(j.market);
         setLastAt(new Date(j.at));
         setFeedError(null);
+        // A trigger order filled / expired during this poll: refresh orders and the paper book
+        if (j.orders?.events?.length) {
+          emitOrders({ events: j.orders.events, pending: j.orders.pending });
+          const [od, pb] = await Promise.all([api(secret, 'orders'), api(secret, 'paper')]).catch(() => [null, null]);
+          if (alive && od) setOrders(od.orders);
+          if (alive && pb) setBook(pb);
+        }
       } catch (e) {
         if (!alive) return;
         setFeedError({ message: e.message, kind: e.kind });
@@ -469,6 +497,8 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
         </>
       )}
 
+      {subview === 'orders' && <OrdersCard secret={secret} orders={orders} quotes={quotes} market={market} onChange={setOrders} />}
+
       {subview === 'positions' && (
         <PositionsCard book={book} quotes={quotes} onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))} />
       )}
@@ -723,7 +753,7 @@ function PositionsCard({ book, quotes, onExit }) {
         <div className="tk-pos-sum">
           <span>Booked <b className={`mono ${tone(bookedToday)}`}>{signed.format(bookedToday)}</b></span>
           <span>Open <b className={`mono ${tone(openSum)}`}>{signed.format(openSum)}</b></span>
-          <span>Brokerage <b className="mono neg">{chargesToday ? `−${price.format(chargesToday)}` : '0.00'}</b></span>
+          <span>Brokerage <b className="mono neg">{chargesToday ? `−${price.format(chargesToday)}` : '0'}</b></span>
           <span className="tk-day-total">Today's net P&amp;L <b className={`mono ${tone(dayTotal)}`}>{money(dayTotal)}</b></span>
           <a className="btn" href="#/paper/reports">P&amp;L reports →</a>
         </div>
@@ -776,7 +806,7 @@ function PositionsCard({ book, quotes, onExit }) {
                   <td className="num mono">{p.ltp != null ? price.format(p.ltp) : <span className="muted-dash">{p.qty ? '…' : '—'}</span>}</td>
                   <td className={`num mono ${tone(p.open)}`}>{p.qty ? (p.open != null ? signed.format(p.open) : '…') : <span className="muted-dash">—</span>}</td>
                   <td className={`num mono ${tone(p.realizedToday)}`}>{signed.format(p.realizedToday)}</td>
-                  <td className="num mono muted-cell">{p.chargesToday ? `−${price.format(p.chargesToday)}` : '0.00'}</td>
+                  <td className="num mono muted-cell">{p.chargesToday ? `−${price.format(p.chargesToday)}` : '0'}</td>
                   <td className={`num mono ${tone(p.total)}`}>{p.total != null ? <b>{signed.format(p.total)}</b> : '…'}</td>
                   <td className="tk-x">
                     {p.qty !== 0 && (

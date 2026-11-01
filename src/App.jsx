@@ -6,7 +6,7 @@ import Pnl from './Pnl.jsx';
 import Journal from './Journal.jsx';
 import FirstHits from './FirstHits.jsx';
 import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
-import { SECRET_KEY as TICKER_SECRET, api as tickerApi, store as tickerStore } from './Ticker.jsx';
+import { SECRET_KEY as TICKER_SECRET, api as tickerApi, price as num, store as tickerStore } from './Ticker.jsx';
 import { ORDERS_EVENT, emitOrders, eventText } from './Orders.jsx';
 
 // ---------------------------------------------------------------- navigation
@@ -113,7 +113,6 @@ function periodMatcher({ period, from, to }) {
   if (period === 'custom') return (d) => (!from || d >= from) && (!to || d <= to);
   return () => true;
 }
-const num = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
 
 function timeAgo(iso) {

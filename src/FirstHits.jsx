@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { AddToTicker, OrderButtons } from './AddToTicker.jsx';
+import { price } from './Ticker.jsx';
 
 // First Hit: for each day (Indian time), the first time each stock was picked,
 // with how many more times — and by which scans — it was picked that day.
 
-const price = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const time = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
 const dayLabel = new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const istDate = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);

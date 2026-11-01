@@ -471,7 +471,7 @@ function ByType({ reports, openPnlFor, selected, onPick }) {
                   <td className={`num mono ${tone(open)}`}>{signed.format(open)}</td>
                   <td className={`num mono ${tone(t?.netWeek)}`}>{signed.format(t?.netWeek ?? 0)}</td>
                   <td className={`num mono ${tone(t?.netAll)}`}><b>{signed.format(t?.netAll ?? 0)}</b></td>
-                  <td className="num mono muted-cell">{t ? `−${price.format(t.chargesAll)}` : '0.00'}</td>
+                  <td className="num mono muted-cell">{t ? `−${price.format(t.chargesAll)}` : '0'}</td>
                   <td className="num mono">{closes ? `${Math.round((t.wins / closes) * 100)}% (${t.wins}/${closes})` : '—'}</td>
                 </tr>
               );
