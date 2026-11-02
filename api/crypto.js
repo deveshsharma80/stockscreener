@@ -18,7 +18,9 @@ import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptos
 
 const TABLE = 'crypto_watchlist';
 const MAX = MAX_COINS;
-const SYMBOL_RE = /^[A-Z0-9]{2,20}USDT$/;
+// Binance symbols are usually A–Z / 0–9 (BTCUSDT, 1000SATSUSDT) but a few use other
+// scripts (e.g. 币安人生USDT), so allow any characters except spaces and URL / HTML specials.
+const SYMBOL_RE = /^[^\s"'<>\\/?#&%=+,;:]{1,30}USDT$/u;
 const DEFAULT = DEFAULT_COINS;
 const PROXY_PATHS = new Set(['/api/v3/klines', '/api/v3/ticker/24hr', '/api/v3/ticker/price', '/api/v3/exchangeInfo']);
 const HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com'];
@@ -31,11 +33,16 @@ function cleanHistory(body) {
   const m = body?.meta || {};
   if (!Array.isArray(body?.rows)) throw new HttpError(400, 'rows must be a list');
   if (body.rows.length > MAX_HISTORY_ROWS) throw new HttpError(400, `At most ${MAX_HISTORY_ROWS} rows`);
-  const rows = body.rows.map((r) => {
-    const symbol = String(r.symbol || '').toUpperCase();
-    const day = String(r.day || '');
-    if (!SYMBOL_RE.test(symbol) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new HttpError(400, 'Bad row in the scan');
-    return {
+  const skipped = [];
+  const rows = [];
+  for (const r of body.rows) {
+    const symbol = String(r?.symbol || '').trim();
+    const day = String(r?.day || '');
+    if (!SYMBOL_RE.test(symbol) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      skipped.push(symbol.slice(0, 40) || '(blank)'); // keep the rest of the scan
+      continue;
+    }
+    rows.push({
       symbol,
       day,
       open: num(r.open),
@@ -49,8 +56,8 @@ function cleanHistory(body) {
       next1: num(r.next1),
       next7: num(r.next7),
       max7: num(r.max7),
-    };
-  });
+    });
+  }
   return {
     meta: {
       runAt: new Date().toISOString(),
@@ -60,6 +67,7 @@ function cleanHistory(body) {
       to: String(m.to || '').slice(0, 10),
       checked: num(m.checked),
       failed: Array.isArray(m.failed) ? m.failed.slice(0, 50).map(String) : [],
+      skipped: skipped.slice(0, 50),
     },
     rows,
   };
@@ -92,7 +100,7 @@ export default async function handler(req, res) {
       case 'GET scan-hits':
         return res.json({ ok: true, hits: (await readHits()).slice().reverse() });
       case 'POST add': {
-        const symbol = String(body.symbol || '').trim().toUpperCase();
+        const symbol = String(body.symbol || '').trim();
         if (!SYMBOL_RE.test(symbol)) throw new HttpError(400, 'Pick a USDT pair, e.g. BTCUSDT');
         const symbols = await updateTable(TABLE, (rows) => {
           if (!rows.length) rows.push(...DEFAULT.map((s) => ({ symbol: s, addedAt: new Date().toISOString() })));

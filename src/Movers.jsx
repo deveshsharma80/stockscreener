@@ -338,7 +338,7 @@ function Results({ saved, watch, onWatch }) {
                   <td><a className="link mono" href={`#/crypto/chart?s=${r.symbol}`} title="Open chart"><b>{coin(r.symbol)}</b></a></td>
                   <td className="num mono pos" title={`+${r.pct.toFixed(1)}% on the day`}><b>{r.ratio.toFixed(2)}×</b></td>
                   <td className="num mono mv-oc">{fmtPrice(r.open)} → {fmtPrice(r.close)}</td>
-                  <td className="num mono muted-cell">{r.highRatio?.toFixed(2)}×</td>
+                  <td className="num mono muted-cell">{r.highRatio != null ? `${r.highRatio.toFixed(2)}×` : '—'}</td>
                   <td className="num mono muted-cell">{fmtCompact(r.quoteVolume)}</td>
                   <td className={`num mono ${tone(r.next1)}`}>{pctText(r.next1)}</td>
                   <td className={`num mono ${tone(r.next7)}`}>{pctText(r.next7)}</td>
@@ -373,6 +373,7 @@ function Results({ saved, watch, onWatch }) {
           <span>
             {view.length ? `${(cur - 1) * PAGE + 1}–${Math.min(cur * PAGE, view.length)} of ${view.length}` : '0'} days
             {meta.failed?.length ? ` · ${meta.failed.length} ${meta.failed.length === 1 ? 'coin' : 'coins'} couldn’t be loaded (${meta.failed.slice(0, 5).map(coin).join(', ')}${meta.failed.length > 5 ? '…' : ''})` : ''}
+            {meta.skipped?.length ? ` · ${meta.skipped.length} skipped (unreadable symbol: ${meta.skipped.slice(0, 3).join(', ')})` : ''}
           </span>
           <span className="jr-pager">
             <button className="btn" onClick={() => setPage(cur - 1)} disabled={cur <= 1}>‹ Prev</button>
