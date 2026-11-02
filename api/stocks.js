@@ -2,7 +2,7 @@
 // Query: ?symbol=RELIANCE  &limit=500  &since=2026-10-21T00:00:00Z
 import { driverName, readTable } from '../lib/db.js';
 import { STOCKS_TABLE } from '../lib/stocks.js';
-import { cors, sendError } from '../lib/http.js';
+import { checkViewer, cors, sendError } from '../lib/http.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -13,6 +13,8 @@ export default async function handler(req, res) {
   }
 
   try {
+    checkViewer(req); // sign-in required once APP_PASSWORD is set
+    res.setHeader('Cache-Control', 'private, no-store');
     const { symbol, since } = req.query || {};
     const limit = Math.min(Math.max(parseInt(req.query?.limit, 10) || 1000, 1), 5000);
 

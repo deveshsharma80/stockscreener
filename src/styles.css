@@ -866,3 +866,19 @@ table.mv-table th.num button { justify-content: flex-end; }
 table.mv-table th { max-width: 92px; }
 table.mv-table th.num { text-align: right; }
 table.mv-table th.num button { margin-left: auto; text-align: right; }
+
+/* Sign in */
+.login-wait { min-height: 100vh; background: var(--bg); }
+.login { min-height: 100vh; display: grid; place-items: center; padding: 16px; background: var(--bg); }
+.login-card { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 26px 24px 24px; display: grid; gap: 14px; box-shadow: 0 10px 40px rgb(0 0 0 / 0.08); }
+.login-brand { padding: 0 0 4px; }
+.login-card h1 { margin: 0; font-size: 22px; }
+.login-card .muted { margin: -8px 0 0; font-size: 14px; }
+.login-field { display: grid; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.login-pw { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); padding: 0 10px 0 0; }
+.login-pw:focus-within { outline: 2px solid var(--accent); border-color: transparent; }
+.login-pw input { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 10px 12px; border: 0; background: transparent; color: var(--text); outline: none; }
+.login-pw .link { font-size: 13px; }
+.login-remember { font-size: 13.5px; }
+.login-btn { padding: 10px 14px; font-size: 15px; }
+.login .status { margin: 0; }

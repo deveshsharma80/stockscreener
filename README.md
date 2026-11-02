@@ -38,6 +38,7 @@ Left menu (collapsible; a drawer on phones), grouped by market — **NSE Market*
 | **Market** | Watchlist · Positions · Orders · Dhan connection | `#/market/watchlist`, `#/market/positions`, `#/market/orders`, `#/market/connection` |
 | **Trades** | All trades · With notes | `#/trades/all`, `#/trades/notes` |
 | **Crypto › Coins** | Watchlist · Chart | `#/crypto/watchlist`, `#/crypto/chart?s=BTCUSDT` |
+| **Crypto › Big Movers** | History | `#/movers/history` |
 | **Paper Trading** | Overview · Reports · Fills | `#/paper/overview`, `#/paper/reports`, `#/paper/trades` |
 
 Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching page.
@@ -80,6 +81,12 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 - Indicators are calculated in the app with TradingView's default formulas (EMA seeded with an SMA, Wilder's RSI, Bollinger with population standard deviation), so values match TradingView closely.
 - Prices come straight from Binance's free public market data (`data-api.binance.vision`, no API key) and live WebSocket streams, in your browser. If a stream can't connect, the page refreshes every 10 s instead. If your network blocks Binance completely, the page falls back to `/api/crypto?action=binance` on your server; Binance blocks some US servers, so if that fallback fails on Vercel set **Settings → Functions → Function Region** to Mumbai (`bom1`).
 - Crypto pages don't read or write Blob except to load / change the coin list.
+
+### Big Movers (history)
+
+- A one-time look back (1, 3 or 6 months) over the **daily candles of every Binance USDT coin**, listing each completed day where **close ÷ open ≥ 1.4** (changeable). Click **Run scan**; your browser fetches one request per coin straight from Binance (≈ 1 minute, with a progress bar and Cancel), and the result is saved on the server (`crypto_movers_history`, one write per run). **Run again** to refresh it.
+- Each day shows open → close, high ÷ open, volume, and what happened next: next day's close, the close 7 days later, and the best price within 7 days (all vs the big day's close). The tiles show averages and how often the coin rose afterwards. Filter by coin or a higher ratio, sort any column, export CSV, add a coin to the watchlist, or open its chart.
+- Only coins trading on Binance today are included (coins delisted since aren't).
 
 ### Daily mover scan (automatic)
 
@@ -147,6 +154,19 @@ Responses:
 - `422` — validation failed; nothing stored. `invalid` lists each bad record and why
 - `503` — no Blob store connected on Vercel
 
+### Sign-in (dashboard)
+
+Set **`APP_PASSWORD`** in Vercel → Settings → Environment Variables (all environments) and redeploy. From then on:
+
+- The site shows only a **Sign in** page until you enter the password; no data is loaded or returned without it (`/api/stocks` included).
+- Signing in sets a private cookie (HttpOnly, SameSite=Lax, Secure) for 12 hours, or **30 days** with "Keep me signed in". **Sign out** is at the bottom of the menu. Changing `APP_PASSWORD` or `WEBHOOK_SECRET` signs everyone out.
+- While signed in, pages no longer ask for the webhook secret.
+- 8 wrong passwords from one IP → locked for 15 minutes.
+- Chartink, cron-job.org and anything else using `?secret=` / `X-Webhook-Secret` keep working unchanged.
+- Search engines are told not to index the site (`robots.txt`, `noindex` meta tag and `X-Robots-Tag` header).
+
+Without `APP_PASSWORD` the app works as before (the menu shows "Sign-in is off").
+
 ### Securing it
 
 Set `WEBHOOK_SECRET`. Callers then pass it as any of:
@@ -190,6 +210,7 @@ api/webhook.js     POST endpoint for third-party apps
 api/stocks.js      GET endpoint used by the dashboard
 api/log.js         GET last raw Chartink payloads (secret required)
 api/delete.js      POST delete rows (all / date range, secret required)
+api/auth.js        sign in / out (APP_PASSWORD)
 api/crypto.js      Crypto: coin list + Binance fallback proxy
 api/ticker.js      Ticker page: Dhan connection, instrument search, watchlist, quotes
 lib/dhan.js        Dhan client: token, instrument list, quotes
@@ -200,7 +221,8 @@ lib/orders.js      trigger orders: create, cancel, expire, fill when the price i
 lib/chartink.js    Chartink alert → stocks rows
 lib/db.js          JSON-file database (local files or Vercel Blob)
 lib/stocks.js      stocks table schema + validation
-lib/http.js        CORS, body parsing, secret check, errors
+lib/http.js        CORS, body parsing, secret / session check, errors
+lib/auth.js        sign-in session cookie, wrong-password limit
 src/App.jsx        Hits page + tabs
 src/Screener.jsx   Screener page (one row per stock)
 src/Ticker.jsx     Ticker page (live Dhan prices, Buy/Sell, positions)
@@ -209,6 +231,7 @@ src/candles.js     builds 3 / 5-minute candles from 1-minute data
 src/Pnl.jsx        P&L reports page
 src/Journal.jsx    Trades page (journal)
 src/Crypto.jsx     Crypto watchlist + chart
+src/Movers.jsx     Big Movers history (one-time scan of past daily candles)
 src/binance.js     Binance market data (REST + live streams) in the browser
 src/indicators.js  EMA, RSI, Bollinger Bands
 src/Orders.jsx     Buy/Sell-at-price popup and the Orders table

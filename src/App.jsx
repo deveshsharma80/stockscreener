@@ -7,6 +7,7 @@ import Journal from './Journal.jsx';
 import Crypto from './Crypto.jsx';
 import Movers from './Movers.jsx';
 import FirstHits from './FirstHits.jsx';
+import Login from './Login.jsx';
 import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
 import { SECRET_KEY as TICKER_SECRET, api as tickerApi, price as num, store as tickerStore } from './Ticker.jsx';
 import { ORDERS_EVENT, emitOrders, eventText } from './Orders.jsx';
@@ -775,7 +776,67 @@ function marketOpenNow() {
   return day >= 1 && day <= 5 && mins >= 555 && mins < 930;
 }
 
+// ---------------------------------------------------------------- sign-in gate
+// With APP_PASSWORD set in Vercel, nothing loads until you sign in. Pages that
+// used to ask for the webhook secret use the sign-in session instead.
+export const SESSION_MARK = '__session__';
+const ON_VERCEL = typeof window !== 'undefined' && !/^(localhost|127\.|192\.168\.)/.test(window.location.hostname);
+
 export default function App() {
+  const [auth, setAuth] = useState(null); // { enabled, loggedIn }
+  const [expired, setExpired] = useState(false);
+
+  const check = useCallback(async () => {
+    try {
+      const r = await fetch('/api/auth?action=me', { cache: 'no-store' });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error);
+      setAuth((prev) => {
+        if (prev?.loggedIn && !j.loggedIn) setExpired(true);
+        return j;
+      });
+      if (j.enabled && j.loggedIn && !tickerStore.get(TICKER_SECRET)) tickerStore.set(TICKER_SECRET, SESSION_MARK);
+      if (j.enabled && !j.loggedIn && tickerStore.get(TICKER_SECRET) === SESSION_MARK) tickerStore.set(TICKER_SECRET, '');
+    } catch {
+      // can't tell (offline / older deployment without /api/auth): keep the current state
+      setAuth((prev) => prev || { enabled: false, loggedIn: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    check();
+    const t = setInterval(check, 10 * 60_000);
+    const onFocus = () => !document.hidden && check();
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [check]);
+
+  const logout = async () => {
+    await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'logout' }) }).catch(() => {});
+    if (tickerStore.get(TICKER_SECRET) === SESSION_MARK) tickerStore.set(TICKER_SECRET, '');
+    setExpired(false);
+    setAuth({ enabled: true, loggedIn: false });
+  };
+
+  if (!auth) return <div className="login-wait" aria-busy="true" />;
+  if (auth.enabled && !auth.loggedIn) {
+    return (
+      <Login
+        expired={expired}
+        onDone={() => {
+          setExpired(false);
+          check();
+        }}
+      />
+    );
+  }
+  return <Shell auth={auth} onLogout={logout} />;
+}
+
+function Shell({ auth, onLogout }) {
   const { section, tab } = useRoute();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [drawer, setDrawer] = useState(false);
@@ -898,6 +959,19 @@ export default function App() {
                 {dhan.ok && dhan.left && <small>Token: {dhan.left}</small>}
               </span>
             </a>
+          )}
+          {auth.enabled ? (
+            <button className="sidenav-collapse" onClick={onLogout} title="Sign out of this device">
+              <Icon name="logout" />
+              <span className="sidenav-label">Sign out</span>
+            </button>
+          ) : (
+            ON_VERCEL && (
+              <span className="nav-status bad" title="Anyone with the address can open this dashboard. Set APP_PASSWORD in Vercel → Settings → Environment Variables, then redeploy.">
+                <i />
+                <span className="sidenav-label">Sign-in is off<small>Set APP_PASSWORD in Vercel</small></span>
+              </span>
+            )
           )}
           <button className="sidenav-collapse" onClick={toggleCollapsed} aria-label={collapsed ? 'Expand menu' : 'Collapse menu'}>
             <Icon name={collapsed ? 'expand' : 'collapse'} />
@@ -1046,6 +1120,12 @@ function Icon({ name }) {
         <svg {...p}>
           <rect x="3" y="6" width="18" height="14" rx="2.5" />
           <path d="M3 10h18M16 15h2M7 6V4.5h10V6" />
+        </svg>
+      );
+    case 'logout':
+      return (
+        <svg {...p}>
+          <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10" />
         </svg>
       );
     case 'rocket':
