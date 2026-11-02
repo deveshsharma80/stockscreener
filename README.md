@@ -81,6 +81,16 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 - Prices come straight from Binance's free public market data (`data-api.binance.vision`, no API key) and live WebSocket streams, in your browser. If a stream can't connect, the page refreshes every 10 s instead. If your network blocks Binance completely, the page falls back to `/api/crypto?action=binance` on your server; Binance blocks some US servers, so if that fallback fails on Vercel set **Settings → Functions → Function Region** to Mumbai (`bom1`).
 - Crypto pages don't read or write Blob except to load / change the coin list.
 
+### Daily mover scan (automatic)
+
+- Checks **every Binance USDT spot pair** (leveraged UP/DOWN tokens excluded) and adds any coin whose **daily candle is up ≥ N %** (default 40 %: close ≥ 1.40 × open, using the live price for today's candle) to the crypto watchlist. Binance's day starts 00:00 UTC = 5:30 AM IST.
+- Each coin is added at most once per day; if you remove it, it isn't re-added that day. Coins found are listed under **Daily mover scan** on Crypto › Coins, and tagged "Auto +62%" in the watchlist. The list holds at most 100 coins; extra finds are logged as "List full".
+- **Run it 24/7** with a free scheduler (cron-job.org), every 15 minutes:
+  `https://YOUR-APP.vercel.app/api/crypto?action=scan&minPct=40&secret=YOUR_SECRET`
+  Change `minPct` to change the threshold. **Scan now** on the page runs it immediately.
+- Uses Binance's trading-day ticker (100 coins per request, ~5 requests per run). Blob is only touched when a coin qualifies for the first time that day.
+- `vercel.json` sets the function region to **Mumbai (`bom1`)**: Binance blocks requests from US servers, which is Vercel's default. (Mumbai is also next to Dhan.)
+
 ## Stop loss / take profit (on the chart)
 
 - Open a chart for an instrument you hold (Watchlist chart button, or **Positions → Set SL / TP on chart**).
@@ -185,6 +195,7 @@ api/ticker.js      Ticker page: Dhan connection, instrument search, watchlist, q
 lib/dhan.js        Dhan client: token, instrument list, quotes
 lib/paper.js       paper trades, positions, daily/weekly P&L
 lib/journal.js     fills → complete trades (entry → exit) + journal notes
+lib/cryptoscan.js  daily mover scan (Binance) → crypto watchlist
 lib/orders.js      trigger orders: create, cancel, expire, fill when the price is reached
 lib/chartink.js    Chartink alert → stocks rows
 lib/db.js          JSON-file database (local files or Vercel Blob)

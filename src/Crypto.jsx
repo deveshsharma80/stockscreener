@@ -48,6 +48,7 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
   const [unlocked, setUnlocked] = useState(false);
   const [error, setError] = useState('');
   const [symbols, setSymbols] = useState([]);
+  const [notes, setNotes] = useState({}); // symbol -> { addedBy, note } (coins added by the scan)
   const [ticks, setTicks] = useState({}); // live 24 h stats per symbol
   const [feed, setFeed] = useState('connecting'); // live | connecting | down
   const [interval, setIntervalState] = useState(readInterval);
@@ -69,6 +70,7 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
     try {
       const j = await api(s, 'watchlist');
       setSymbols(j.symbols);
+      setNotes(Object.fromEntries((j.items || []).filter((r) => r.addedBy).map((r) => [r.symbol, r])));
       setUnlocked(true);
       setError('');
       useProxy(s);
@@ -170,7 +172,10 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
           actionsEl
         )}
       {subview === 'watchlist' ? (
-        <Watchlist symbols={symbols} ticks={ticks} interval={interval} cfg={cfg} onAdd={(s) => changeList('add', s)} onRemove={(s) => changeList('remove', s)} onChart={openChart} />
+        <>
+          <Watchlist symbols={symbols} notes={notes} ticks={ticks} interval={interval} cfg={cfg} onAdd={(s) => changeList('add', s)} onRemove={(s) => changeList('remove', s)} onChart={openChart} />
+          <ScanPanel secret={secret} onListChanged={() => load(secret)} />
+        </>
       ) : (
         <CryptoChart
           key={`${current}-${interval}`}
@@ -190,7 +195,7 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
 
 // ------------------------------------------------------------------ watchlist
 
-function Watchlist({ symbols, ticks, interval, cfg, onAdd, onRemove, onChart }) {
+function Watchlist({ symbols, notes = {}, ticks, interval, cfg, onAdd, onRemove, onChart }) {
   const [candles, setCandles] = useState({}); // symbol -> candles for the readings
   const [scanAt, setScanAt] = useState(null);
   const [scanErr, setScanErr] = useState('');
@@ -289,7 +294,10 @@ function Watchlist({ symbols, ticks, interval, cfg, onAdd, onRemove, onChart }) 
               <tr key={s} className="clickable" onClick={() => onChart(s)}>
                 <td className="tk-inst">
                   <div className="tk-name">{coin(s)}</div>
-                  <div className="tk-sub"><span>{s}</span></div>
+                  <div className="tk-sub">
+                    <span>{s}</span>
+                    {notes[s]?.addedBy === 'scan' && <span className="ind-tag new" title={`Added by the daily mover scan: ${notes[s].note || ''}`}>Auto {(notes[s].note || '').split(' ')[0]}</span>}
+                  </div>
                 </td>
                 <td className="num mono"><b>{fmtPrice(price)}</b></td>
                 <td className={`num mono ${tone(t?.changePct)}`}>{t?.changePct != null ? `${t.changePct > 0 ? '+' : ''}${t.changePct.toFixed(2)}%` : '…'}</td>
@@ -705,5 +713,119 @@ function NumIn({ label, value, min, max, step = 1, onChange }) {
         aria-label={label}
       />
     </label>
+  );
+}
+
+// ------------------------------------------------------------------ daily mover scan
+
+const SCAN_PCT_KEY = 'stockhits.cryptoScanPct';
+const dayFmt = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const timeFmt = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+
+function ScanPanel({ secret, onListChanged }) {
+  const [pct, setPct] = useState(() => Number(store.get(SCAN_PCT_KEY)) || 40);
+  const [hits, setHits] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null); // { kind, text }
+  const [showSetup, setShowSetup] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const loadHits = useCallback(() => api(secret, 'scan-hits').then((j) => setHits(j.hits)).catch(() => setHits([])), [secret]);
+  useEffect(() => {
+    loadHits();
+  }, [loadHits]);
+
+  const scan = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const j = await api(secret, 'scan', { method: 'POST', body: { minPct: pct } });
+      const list = j.matches.map((m) => `${coin(m.symbol)} +${m.pct}%${j.added.includes(m.symbol) ? ' (added)' : j.full.includes(m.symbol) ? ' (list full)' : ''}`);
+      setResult({
+        kind: 'ok',
+        text: `Checked ${j.checked.toLocaleString('en-IN')} USDT pairs for today's daily candle (${dayFmt.format(new Date(`${j.day}T00:00:00Z`))}). ${
+          j.matches.length ? `${j.matches.length} up ${pct}% or more: ${list.join(', ')}.` : `None are up ${pct}% or more yet.`
+        }`,
+      });
+      if (j.added.length) onListChanged();
+      loadHits();
+    } catch (e) {
+      setResult({ kind: 'err', text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const url = `${window.location.origin}/api/crypto?action=scan&minPct=${pct}&secret=YOUR_SECRET`;
+  return (
+    <section className="card scan-card">
+      <div className="card-head">
+        <div>
+          <h2>Daily mover scan</h2>
+          <p className="muted scan-sub">
+            Adds every Binance USDT coin whose <b>daily candle is up {pct}% or more</b> (close ≥ {(1 + pct / 100).toFixed(2)} × open) to your watchlist.
+            The day starts 5:30 AM IST (00:00 UTC), like the daily chart.
+          </p>
+        </div>
+        <div className="form-actions">
+          <label className="tk-ema-in">
+            Up at least
+            <input type="number" min="1" max="10000" step="1" value={pct} onChange={(e) => { const v = Number(e.target.value); if (v > 0) { setPct(v); store.set(SCAN_PCT_KEY, String(v)); } }} aria-label="Minimum daily gain %" />
+            %
+          </label>
+          <button className="btn primary" onClick={scan} disabled={busy}>{busy ? 'Scanning…' : 'Scan now'}</button>
+        </div>
+      </div>
+      {result && <p className={`status ${result.kind} tk-pos-msg`}>{result.text}</p>}
+
+      <div className="scan-cols">
+        <div>
+          <h4>Found by the scan</h4>
+          {hits === null ? (
+            <p className="muted">Loading…</p>
+          ) : hits.length ? (
+            <table className="scan-hits">
+              <thead>
+                <tr><th>Day</th><th>Coin</th><th className="num">Daily gain</th><th className="num">Price then</th><th>Found</th><th /></tr>
+              </thead>
+              <tbody>
+                {hits.slice(0, 15).map((h) => (
+                  <tr key={`${h.day}|${h.symbol}`}>
+                    <td>{dayFmt.format(new Date(`${h.day}T00:00:00Z`))}</td>
+                    <td><a className="link mono" href={`#/crypto/chart?s=${h.symbol}`}>{coin(h.symbol)}</a></td>
+                    <td className="num mono pos">+{h.pct}%</td>
+                    <td className="num mono">{fmtPrice(h.price)}</td>
+                    <td className="muted-cell">{timeFmt.format(new Date(h.at))}</td>
+                    <td>{h.added ? <span className="ind-tag new">Added</span> : h.full ? <span className="ind-tag hot">List full</span> : <span className="muted-cell">Already listed</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="muted">Nothing found yet. Coins appear here (and in your watchlist) the first time they qualify each day.</p>
+          )}
+        </div>
+        <div className="scan-setup">
+          <h4>Run it automatically, 24/7</h4>
+          <p className="muted">
+            The scan runs whenever its address is opened. A free scheduler can open it every 15 minutes, day and night — your browser doesn't need to be open.
+          </p>
+          {showSetup ? (
+            <ol className="scan-steps">
+              <li>Sign up free at <a className="link" href="https://cron-job.org" target="_blank" rel="noopener noreferrer">cron-job.org</a> → <b>Create cronjob</b>.</li>
+              <li>
+                URL (replace YOUR_SECRET with your webhook secret):
+                <code className="scan-url">{url}</code>
+                <button className="btn" onClick={() => navigator.clipboard?.writeText(url).then(() => (setCopied(true), setTimeout(() => setCopied(false), 1500)))}>{copied ? 'Copied ✓' : 'Copy URL'}</button>
+              </li>
+              <li>Schedule: <b>every 15 minutes</b>, every day. Save.</li>
+              <li>Each run checks all coins in a few seconds; coins found are added here once per day.</li>
+            </ol>
+          ) : (
+            <button className="btn" onClick={() => setShowSetup(true)}>Show setup steps</button>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }

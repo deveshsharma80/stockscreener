@@ -3,17 +3,21 @@
 // GET  ?action=watchlist                      your coins
 // POST {action:"add", symbol:"BTCUSDT"}       add a coin (USDT pair)
 // POST {action:"remove", symbol:"BTCUSDT"}
+// GET  ?action=scan&minPct=40                 daily mover scan: every USDT pair whose daily
+//      candle is up ≥ minPct % gets added to the watchlist (for a scheduler, every 15 min)
+// GET  ?action=scan-hits                      coins found by the scan (latest first)
 // GET  ?action=binance&path=/api/v3/klines&q=<query>
 //      fallback proxy for Binance public market data, used only if the
 //      browser can't reach Binance directly. Binance blocks some US servers;
 //      if this fails on Vercel, set the function region to Mumbai (bom1).
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
+import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
 
 const TABLE = 'crypto_watchlist';
-const MAX = 100;
+const MAX = MAX_COINS;
 const SYMBOL_RE = /^[A-Z0-9]{2,20}USDT$/;
-const DEFAULT = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
+const DEFAULT = DEFAULT_COINS;
 const PROXY_PATHS = new Set(['/api/v3/klines', '/api/v3/ticker/24hr', '/api/v3/ticker/price', '/api/v3/exchangeInfo']);
 const HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com'];
 
@@ -30,8 +34,19 @@ export default async function handler(req, res) {
     const action = req.method === 'POST' ? body.action : req.query?.action;
 
     switch (`${req.method} ${action}`) {
-      case 'GET watchlist':
-        return res.json({ ok: true, symbols: await watchlist() });
+      case 'GET watchlist': {
+        const items = await watchlist();
+        return res.json({ ok: true, symbols: items.map((r) => r.symbol), items });
+      }
+      case 'GET scan':
+      case 'POST scan': {
+        const raw = req.method === 'POST' ? body.minPct : req.query?.minPct;
+        const minPct = raw === undefined || raw === '' ? 40 : Number(raw);
+        if (!(minPct > 0 && minPct <= 10000)) throw new HttpError(400, 'minPct must be a percentage above 0, e.g. 40');
+        return res.json({ ok: true, ...(await runDailyScan({ minPct })) });
+      }
+      case 'GET scan-hits':
+        return res.json({ ok: true, hits: (await readHits()).slice().reverse() });
       case 'POST add': {
         const symbol = String(body.symbol || '').trim().toUpperCase();
         if (!SYMBOL_RE.test(symbol)) throw new HttpError(400, 'Pick a USDT pair, e.g. BTCUSDT');
@@ -68,7 +83,7 @@ export default async function handler(req, res) {
 
 async function watchlist() {
   const rows = await readTable(TABLE).catch(() => []);
-  return rows.length ? rows.map((r) => r.symbol) : DEFAULT; // starter list until you change it
+  return rows.length ? rows : DEFAULT.map((symbol) => ({ symbol })); // starter list until you change it
 }
 
 async function proxy(path, q) {

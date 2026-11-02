@@ -1,6 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/ticker.js": { "maxDuration": 60 }
-  }
+    "api/ticker.js": {
+      "maxDuration": 60
+    },
+    "api/crypto.js": {
+      "maxDuration": 60
+    }
+  },
+  "regions": [
+    "bom1"
+  ]
 }
