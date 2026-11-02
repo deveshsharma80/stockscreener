@@ -30,13 +30,15 @@ To add another table, call `readTable('name')` / `updateTable('name', rows => �
 
 ## Pages
 
-Left menu (collapsible; a drawer on phones) with three sections; each section has tabs at the top of the page:
+Left menu (collapsible; a drawer on phones), grouped by market — **NSE Market** and **Crypto**; each section has tabs at the top of the page:
 
 | Section | Tabs | Address |
 |---|---|---|
 | **Signals** | Hits · First Hit · Screener · Webhook setup | `#/signals/hits`, `#/signals/firsthit`, `#/signals/screener`, `#/signals/setup` |
 | **Market** | Watchlist · Positions · Orders · Dhan connection | `#/market/watchlist`, `#/market/positions`, `#/market/orders`, `#/market/connection` |
-| **Paper Trading** | Overview · Reports · Trades | `#/paper/overview`, `#/paper/reports`, `#/paper/trades` |
+| **Trades** | All trades · With notes | `#/trades/all`, `#/trades/notes` |
+| **Crypto › Coins** | Watchlist · Chart | `#/crypto/watchlist`, `#/crypto/chart?s=BTCUSDT` |
+| **Paper Trading** | Overview · Reports · Fills | `#/paper/overview`, `#/paper/reports`, `#/paper/trades` |
 
 Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching page.
 
@@ -50,7 +52,8 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 - **Positions** — open paper positions with live P&L and Exit.
 - **Orders** — trigger orders waiting for their price (with Cancel), and what filled, failed or expired.
 - **Dhan connection** — paste / renew the Dhan access token.
-- **Overview / Reports / Trades** — paper account, P&L by trade type, daily and weekly reports, trade history.
+- **Trades** — your trading journal: each trade from entry to exit (adding and partial exits included) with entry/exit time and average price, time held, net P&L after brokerage, P&L % (hover for the return on margin), and your notes. Filter by period, trade type and result; 20/50/100 per page; search finds notes too; CSV export includes notes. Notes are stored in `trade_journal` (`GET /api/ticker?action=journal`, `POST {action:"journal-note", id, note}`).
+- **Overview / Reports / Fills** — paper account, P&L by trade type, daily and weekly reports, trade history.
 
 ## Ticker and Dhan
 
@@ -69,6 +72,24 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 - With every tab closed, nothing checks prices unless you add a scheduler. Free option: [cron-job.org](https://cron-job.org) → new cron job → URL `https://YOUR-APP.vercel.app/api/ticker?action=check-orders&secret=YOUR_SECRET`, every 1 minute, Mon–Fri. Each call checks waiting orders once.
 - Stored in `paper_orders`. Resetting the paper account cancels waiting orders.
 - Testing outside market hours: set `PAPER_ORDERS_IGNORE_HOURS=1` (with `DHAN_MOCK=1` locally) so orders trigger any time.
+
+## Crypto (Binance)
+
+- **Watchlist** — your coins (Binance spot, USDT pairs) with live price, 24 h change and volume, and readings on hourly or daily candles (switch at the top): **RSI** (Overbought ≥ 70 / Oversold ≤ 30), **EMA trend** (fast vs slow, with "crossed N h ago" for recent crossovers) and **Bollinger** position (%B meter, or Above upper / Below lower). Add coins with the search box (all USDT pairs, biggest volume first). Click a row for its chart. The list starts with BTC, ETH, SOL, BNB, XRP and is saved on the server (`crypto_watchlist`).
+- **Chart** — 1-hour (≈ 4 months, 3,000 candles) or 1-day (≈ 2¾ years, 1,000 candles) candles with volume, **EMA** fast/slow lines with Bull/Bear crossover markers, **Bollinger Bands** (upper / middle / lower) and an **RSI** panel with 70 / 50 / 30 lines. Each indicator can be switched off and its settings changed (saved on this device). The current candle moves live.
+- Indicators are calculated in the app with TradingView's default formulas (EMA seeded with an SMA, Wilder's RSI, Bollinger with population standard deviation), so values match TradingView closely.
+- Prices come straight from Binance's free public market data (`data-api.binance.vision`, no API key) and live WebSocket streams, in your browser. If a stream can't connect, the page refreshes every 10 s instead. If your network blocks Binance completely, the page falls back to `/api/crypto?action=binance` on your server; Binance blocks some US servers, so if that fallback fails on Vercel set **Settings → Functions → Function Region** to Mumbai (`bom1`).
+- Crypto pages don't read or write Blob except to load / change the coin list.
+
+## Stop loss / take profit (on the chart)
+
+- Open a chart for an instrument you hold (Watchlist chart button, or **Positions → Set SL / TP on chart**).
+- Click **+ Stop loss** / **+ Take profit**: a level is placed 1% / 2% away from the price. **Drag the dashed line** on the chart and drop it where you want; it's saved when you let go. You can also type the price in the box above the chart, or remove it with ×.
+- Each line shows the P&L of the whole position if it exits there. The dotted grey line is your average entry.
+- When the price reaches a level, the app closes the **whole open position** at the live price (as a paper trade), during market hours, using the same checking as trigger orders (open app pages, or the cron-job.org scheduler).
+- One-cancels-other: when one fills, or you exit the position yourself, the other is removed. Levels don't expire while the position is open.
+- Rules: for a long (bought) position the stop loss must be below the current price and the take profit above it; reversed for a short. A level on the wrong side is rejected and the line snaps back.
+- API: `POST /api/ticker {action:"set-exit", key, kind:"SL"|"TP", price}` (`price: null` removes it). Stored with the orders in `paper_orders`.
 
 ## Chartink (premium alerts → webhook)
 
@@ -159,9 +180,11 @@ api/webhook.js     POST endpoint for third-party apps
 api/stocks.js      GET endpoint used by the dashboard
 api/log.js         GET last raw Chartink payloads (secret required)
 api/delete.js      POST delete rows (all / date range, secret required)
+api/crypto.js      Crypto: coin list + Binance fallback proxy
 api/ticker.js      Ticker page: Dhan connection, instrument search, watchlist, quotes
 lib/dhan.js        Dhan client: token, instrument list, quotes
 lib/paper.js       paper trades, positions, daily/weekly P&L
+lib/journal.js     fills → complete trades (entry → exit) + journal notes
 lib/orders.js      trigger orders: create, cancel, expire, fill when the price is reached
 lib/chartink.js    Chartink alert → stocks rows
 lib/db.js          JSON-file database (local files or Vercel Blob)
@@ -173,6 +196,10 @@ src/Ticker.jsx     Ticker page (live Dhan prices, Buy/Sell, positions)
 src/Chart.jsx      3 / 5-minute candle chart
 src/candles.js     builds 3 / 5-minute candles from 1-minute data
 src/Pnl.jsx        P&L reports page
+src/Journal.jsx    Trades page (journal)
+src/Crypto.jsx     Crypto watchlist + chart
+src/binance.js     Binance market data (REST + live streams) in the browser
+src/indicators.js  EMA, RSI, Bollinger Bands
 src/Orders.jsx     Buy/Sell-at-price popup and the Orders table
 src/FirstHits.jsx  First Hit tab
 src/AddToTicker.jsx  "+ Ticker" and B / S buttons on the Signals pages

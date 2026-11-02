@@ -1,0 +1,709 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { CandlestickSeries, HistogramSeries, LineSeries, LineStyle, createChart, createSeriesMarkers } from 'lightweight-charts';
+import { SECRET_KEY, SecretGate, store } from './Ticker.jsx';
+import { INTERVALS, applyKline, fmtCompact, fmtPrice, klines, stream, tickers, usdtMarkets, useProxy } from './binance.js';
+import { bollinger, crossovers, ema, readings, rsi } from './indicators.js';
+import { IST_OFFSET } from './candles.js';
+
+// Crypto (Binance spot, USDT pairs): a watchlist with live prices and
+// RSI / EMA / Bollinger readings, and an hourly / daily candle chart with
+// EMA lines, Bollinger Bands and an RSI panel. Prices come straight from
+// Binance's free public market data; the coin list is saved on the server.
+
+const CFG_KEY = 'stockhits.cryptoInd';
+const INT_KEY = 'stockhits.cryptoInterval';
+const DEFAULT_CFG = { emaOn: true, emaFast: 20, emaSlow: 50, bbOn: true, bbPeriod: 20, bbMult: 2, rsiOn: true, rsi: 14 };
+const HISTORY = { '1h': 3000, '1d': 1000 }; // ≈ 4 months hourly, ≈ 2¾ years daily
+const SCAN_CANDLES = 300;
+const SCAN_EVERY = { '1h': 5 * 60_000, '1d': 30 * 60_000 };
+
+function readCfg() {
+  try {
+    const v = JSON.parse(store.get(CFG_KEY) || 'null');
+    if (v) return { ...DEFAULT_CFG, ...v };
+  } catch {}
+  return DEFAULT_CFG;
+}
+const readInterval = () => (store.get(INT_KEY) === '1d' ? '1d' : '1h');
+const symbolFromHash = () => (window.location.hash.split('?')[1] || '').match(/(?:^|&)s=([A-Z0-9]+)/)?.[1] || '';
+const coin = (s) => s.replace(/USDT$/, '');
+const tone = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
+
+async function api(secret, action, { method = 'GET', body } = {}) {
+  const r = await fetch(`/api/crypto${method === 'GET' ? `?action=${action}` : ''}`, {
+    method,
+    cache: 'no-store',
+    headers: { 'X-Webhook-Secret': secret, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify({ action, ...body }) : undefined,
+  });
+  const j = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
+  if (!j.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { status: r.status });
+  return j;
+}
+
+export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
+  const [secret, setSecret] = useState(() => store.get(SECRET_KEY));
+  const [checking, setChecking] = useState(Boolean(store.get(SECRET_KEY)));
+  const [unlocked, setUnlocked] = useState(false);
+  const [error, setError] = useState('');
+  const [symbols, setSymbols] = useState([]);
+  const [ticks, setTicks] = useState({}); // live 24 h stats per symbol
+  const [feed, setFeed] = useState('connecting'); // live | connecting | down
+  const [interval, setIntervalState] = useState(readInterval);
+  const [cfg, setCfgState] = useState(readCfg);
+  const [chartSym, setChartSym] = useState(symbolFromHash);
+
+  const setIntervalV = (v) => {
+    setIntervalState(v);
+    store.set(INT_KEY, v);
+  };
+  const setCfg = (patch) =>
+    setCfgState((c) => {
+      const n = { ...c, ...patch };
+      store.set(CFG_KEY, JSON.stringify(n));
+      return n;
+    });
+
+  const load = useCallback(async (s) => {
+    try {
+      const j = await api(s, 'watchlist');
+      setSymbols(j.symbols);
+      setUnlocked(true);
+      setError('');
+      useProxy(s);
+      return true;
+    } catch (e) {
+      setError(e.message);
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!secret) return;
+    load(secret).then((ok) => {
+      setChecking(false);
+      if (!ok) {
+        store.set(SECRET_KEY, '');
+        setSecret('');
+      }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const on = () => setChartSym(symbolFromHash());
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+
+  // Live prices: one Binance stream for the whole list; REST polling if it can't connect
+  const symKey = symbols.join(',');
+  useEffect(() => {
+    if (!unlocked || !symbols.length) return;
+    let alive = true;
+    let poll = null;
+    const refresh = () =>
+      tickers(symbols)
+        .then((t) => alive && setTicks((x) => ({ ...x, ...t })))
+        .catch(() => {});
+    refresh();
+    const stop = stream(
+      symbols.map((s) => `${s.toLowerCase()}@miniTicker`),
+      (d) => {
+        if (!alive || !d?.s) return;
+        const price = +d.c;
+        const open = +d.o;
+        setTicks((x) => ({ ...x, [d.s]: { ...x[d.s], price, open, changePct: open ? ((price - open) / open) * 100 : 0, quoteVolume: +d.q, high: +d.h, low: +d.l } }));
+      },
+      (st) => {
+        if (!alive) return;
+        setFeed(st);
+        clearInterval(poll);
+        poll = st === 'down' ? setInterval(refresh, 10_000) : null;
+      }
+    );
+    return () => {
+      alive = false;
+      stop();
+      clearInterval(poll);
+    };
+  }, [unlocked, symKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (checking) return <p className="tk-note">Opening Crypto…</p>;
+  if (!unlocked) {
+    return (
+      <SecretGate
+        error={error}
+        notice=""
+        onSubmit={async (s, remember) => {
+          setSecret(s);
+          if (await load(s)) store.set(SECRET_KEY, remember ? s : '');
+        }}
+      />
+    );
+  }
+
+  const changeList = async (action, symbol) => {
+    const j = await api(secret, action, { method: 'POST', body: { symbol } });
+    setSymbols(j.symbols);
+  };
+  const openChart = (s) => {
+    window.location.hash = `#/crypto/chart?s=${s}`;
+  };
+  const current = chartSym || symbols[0] || 'BTCUSDT';
+
+  return (
+    <>
+      {actionsEl &&
+        createPortal(
+          <div className="tk-live">
+            <span className={`tk-dot ${feed === 'live' ? 'on' : ''}`} />
+            <span className="tk-live-text">{feed === 'live' ? 'Live from Binance' : feed === 'down' ? 'Stream unavailable — refreshing every 10 s' : 'Connecting to Binance…'}</span>
+            <div className="seg" role="group" aria-label="Candle interval">
+              {Object.keys(INTERVALS).map((v) => (
+                <button key={v} className={interval === v ? 'on' : ''} onClick={() => setIntervalV(v)}>
+                  {v === '1h' ? 'Hourly' : 'Daily'}
+                </button>
+              ))}
+            </div>
+          </div>,
+          actionsEl
+        )}
+      {subview === 'watchlist' ? (
+        <Watchlist symbols={symbols} ticks={ticks} interval={interval} cfg={cfg} onAdd={(s) => changeList('add', s)} onRemove={(s) => changeList('remove', s)} onChart={openChart} />
+      ) : (
+        <CryptoChart
+          key={`${current}-${interval}`}
+          symbol={current}
+          symbols={symbols}
+          interval={interval}
+          setInterval={setIntervalV}
+          cfg={cfg}
+          setCfg={setCfg}
+          tick={ticks[current]}
+          onSymbol={openChart}
+        />
+      )}
+    </>
+  );
+}
+
+// ------------------------------------------------------------------ watchlist
+
+function Watchlist({ symbols, ticks, interval, cfg, onAdd, onRemove, onChart }) {
+  const [candles, setCandles] = useState({}); // symbol -> candles for the readings
+  const [scanAt, setScanAt] = useState(null);
+  const [scanErr, setScanErr] = useState('');
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+
+  // Candles for the indicator readings, refreshed every few minutes
+  useEffect(() => {
+    let alive = true;
+    let timer;
+    const scan = async () => {
+      const out = {};
+      let failed = 0;
+      const queue = [...symbols];
+      const worker = async () => {
+        while (queue.length) {
+          const s = queue.shift();
+          try {
+            out[s] = await klines(s, interval, SCAN_CANDLES);
+          } catch (e) {
+            failed++;
+            setScanErr(e.message);
+          }
+        }
+      };
+      await Promise.all([worker(), worker(), worker(), worker()]);
+      if (!alive) return;
+      setCandles(out);
+      setScanAt(new Date());
+      if (!failed) setScanErr('');
+      timer = setTimeout(scan, SCAN_EVERY[interval]);
+    };
+    setCandles({});
+    scan();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [symbols.join(','), interval]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Readings use the live price as the latest close
+  const rows = useMemo(
+    () =>
+      symbols.map((s) => {
+        const t = ticks[s];
+        const cs = candles[s];
+        let r = null;
+        if (cs?.length) {
+          const live = t?.price != null ? cs.map((c, i) => (i === cs.length - 1 ? { ...c, close: t.price } : c)) : cs;
+          r = readings(live, { rsi: cfg.rsi, emaFast: cfg.emaFast, emaSlow: cfg.emaSlow, bbPeriod: cfg.bbPeriod, bbMult: cfg.bbMult });
+        }
+        return { s, t, r, price: t?.price ?? cs?.[cs.length - 1]?.close ?? null };
+      }),
+    [symbols, ticks, candles, cfg]
+  );
+
+  const act = async (fn, s, text) => {
+    setBusy(s);
+    setMsg('');
+    try {
+      await fn(s);
+      if (text) setMsg(text);
+    } catch (e) {
+      setMsg(`⚠ ${e.message}`);
+    } finally {
+      setBusy('');
+    }
+  };
+  const per = interval === '1h' ? 'hourly' : 'daily';
+
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2>Coins</h2>
+        <AddCoin existing={symbols} onAdd={(s) => act(onAdd, s, `${coin(s)} added.`)} />
+      </div>
+      {msg && <p className={`status ${msg.startsWith('⚠') ? 'err' : 'ok'} tk-pos-msg`}>{msg}</p>}
+      {scanErr && <p className="status err tk-pos-msg">Indicator data: {scanErr}</p>}
+      <div className="table-wrap">
+        <table className="ticker crypto-table">
+          <thead>
+            <tr>
+              <th>Coin</th>
+              <th className="num">Price (USDT)</th>
+              <th className="num">24h</th>
+              <th className="num">24h volume</th>
+              <th className="num" title={`RSI ${cfg.rsi} on ${per} candles`}>RSI {cfg.rsi}</th>
+              <th title={`EMA ${cfg.emaFast} vs EMA ${cfg.emaSlow} on ${per} candles`}>EMA {cfg.emaFast}/{cfg.emaSlow}</th>
+              <th title={`Bollinger Bands ${cfg.bbPeriod}, ${cfg.bbMult} on ${per} candles`}>Bollinger</th>
+              <th aria-label="Chart" />
+              <th aria-label="Remove" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ s, t, r, price }) => (
+              <tr key={s} className="clickable" onClick={() => onChart(s)}>
+                <td className="tk-inst">
+                  <div className="tk-name">{coin(s)}</div>
+                  <div className="tk-sub"><span>{s}</span></div>
+                </td>
+                <td className="num mono"><b>{fmtPrice(price)}</b></td>
+                <td className={`num mono ${tone(t?.changePct)}`}>{t?.changePct != null ? `${t.changePct > 0 ? '+' : ''}${t.changePct.toFixed(2)}%` : '…'}</td>
+                <td className="num mono muted-cell">{t?.quoteVolume != null ? fmtCompact(t.quoteVolume) : '…'}</td>
+                <td className="num">
+                  {r?.rsi != null ? (
+                    <>
+                      <span className={`mono ${r.rsi >= 70 ? 'neg' : r.rsi <= 30 ? 'pos' : ''}`}>{r.rsi.toFixed(1)}</span>
+                      {r.rsi >= 70 && <span className="ind-tag hot">Overbought</span>}
+                      {r.rsi <= 30 && <span className="ind-tag cold">Oversold</span>}
+                    </>
+                  ) : (
+                    <span className="muted-dash">…</span>
+                  )}
+                </td>
+                <td>
+                  {r?.trend ? (
+                    <>
+                      <span className={`ind-trend ${r.trend}`}>{r.trend === 'bull' ? 'Bullish ▲' : 'Bearish ▼'}</span>
+                      {r.lastCross && r.lastCross.barsAgo <= 5 && (
+                        <span className="ind-tag new" title="Recent EMA crossover">
+                          crossed {r.lastCross.barsAgo === 0 ? 'now' : `${r.lastCross.barsAgo} ${interval === '1h' ? 'h' : 'd'} ago`}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="muted-dash">…</span>
+                  )}
+                </td>
+                <td>{r?.bb?.upper != null ? <BbCell price={price} bb={r.bb} /> : <span className="muted-dash">…</span>}</td>
+                <td className="tk-x">
+                  <button className="icon-btn tk-chart-btn" onClick={(e) => (e.stopPropagation(), onChart(s))} title={`${coin(s)} chart`} aria-label={`${coin(s)} chart`}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M6 3v3M6 15v6M12 2v5M12 14v3M18 5v4M18 16v5" /><rect x="4" y="6" width="4" height="9" rx="1" /><rect x="10" y="7" width="4" height="7" rx="1" /><rect x="16" y="9" width="4" height="7" rx="1" /></svg>
+                  </button>
+                </td>
+                <td className="tk-x">
+                  <button className="icon-btn" onClick={(e) => (e.stopPropagation(), act(onRemove, s, `${coin(s)} removed.`))} disabled={busy === s} aria-label={`Remove ${coin(s)}`}>×</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!symbols.length && <div className="empty">No coins yet. Search above to add one, e.g. BTC.</div>}
+      </div>
+      <div className="foot">
+        Binance spot, USDT pairs · indicators on {per} candles using the live price for the current candle
+        {scanAt && <> · candles refreshed {scanAt.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}</>} · change periods and settings on the Chart tab
+      </div>
+    </section>
+  );
+}
+
+function BbCell({ price, bb }) {
+  if (price > bb.upper) return <span className="ind-tag hot">Above upper</span>;
+  if (price < bb.lower) return <span className="ind-tag cold">Below lower</span>;
+  const pct = Math.round(bb.pctB * 100);
+  return (
+    <span className="bb-meter" title={`%B ${pct}% — 0% = lower band, 100% = upper band`}>
+      <span className="bb-track"><i style={{ left: `${Math.min(100, Math.max(0, pct))}%` }} /></span>
+      <span className="mono muted-cell">{pct}%</span>
+    </span>
+  );
+}
+
+function AddCoin({ existing, onAdd }) {
+  const [q, setQ] = useState('');
+  const [list, setList] = useState(null);
+  const [err, setErr] = useState('');
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open || list) return;
+    usdtMarkets().then(setList).catch((e) => setErr(e.message));
+  }, [open, list]);
+  const term = q.trim().toUpperCase().replace(/USDT$/, '');
+  const matches = (list || []).filter((m) => !term || m.base.startsWith(term) || m.symbol.startsWith(term)).slice(0, 12);
+  const pick = (s) => {
+    setQ('');
+    setOpen(false);
+    if (!existing.includes(s)) onAdd(s);
+  };
+  return (
+    <div className="tk-add crypto-add">
+      <input
+        className="search"
+        placeholder="Add coin: BTC, ETH, SOL…"
+        value={q}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onChange={(e) => (setQ(e.target.value), setOpen(true))}
+        onKeyDown={(e) => e.key === 'Enter' && matches[0] && pick(matches[0].symbol)}
+        aria-label="Add coin"
+      />
+      {open && (
+        <div className="tk-results">
+          {err && <div className="tk-result-note">{err}</div>}
+          {!list && !err && <div className="tk-result-note">Loading Binance markets…</div>}
+          {list && !matches.length && <div className="tk-result-note">No USDT pair matches “{q}”.</div>}
+          {matches.map((m) => (
+            <button key={m.symbol} className="tk-result" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(m.symbol)} disabled={existing.includes(m.symbol)}>
+              <span className="mono"><b>{m.base}</b>/USDT</span>
+              <span className="mono muted-cell">{fmtPrice(m.price)}</span>
+              <span className="muted-cell">vol {fmtCompact(m.quoteVolume)}</span>
+              {existing.includes(m.symbol) && <span className="muted-cell">added</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ chart
+
+const palette = (dark) =>
+  dark
+    ? { up: '#16a34a', down: '#ea580c', text: '#93a29a', grid: '#26312c', bg: '#151c19', cross: '#5b6b63', fast: '#3b82f6', slow: '#c026d3', bb: '#22d3ee', rsi: '#fbbf24', lvl: '#5b6b63' }
+    : { up: '#15803d', down: '#c2410c', text: '#5f6b65', grid: '#e9ece7', bg: '#ffffff', cross: '#9aa39e', fast: '#1d4ed8', slow: '#a21caf', bb: '#0e7490', rsi: '#b45309', lvl: '#9aa39e' };
+const prefersDark = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+const shift = (t) => t + IST_OFFSET; // chart axis in Indian time
+
+function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick, onSymbol }) {
+  const box = useRef(null);
+  const chartRef = useRef(null);
+  const sRef = useRef({});
+  const candlesRef = useRef([]);
+  const indRef = useRef(null);
+  const cfgRef = useRef(cfg);
+  cfgRef.current = cfg;
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
+  const [hover, setHover] = useState(null);
+  const [live, setLive] = useState('connecting');
+  const [, force] = useState(0);
+  const [dark, setDark] = useState(prefersDark);
+
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    const on = () => setDark(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+
+  // Build the chart (again when the RSI panel is switched or the theme changes)
+  useEffect(() => {
+    const p = palette(dark);
+    const chart = createChart(box.current, {
+      autoSize: true,
+      layout: { background: { color: p.bg }, textColor: p.text, fontFamily: 'system-ui, sans-serif', attributionLogo: true, panes: { separatorColor: p.grid } },
+      grid: { vertLines: { color: p.grid }, horzLines: { color: p.grid } },
+      rightPriceScale: { borderVisible: false },
+      timeScale: { borderVisible: false, timeVisible: interval === '1h', secondsVisible: false, rightOffset: 4 },
+      crosshair: { vertLine: { color: p.cross, labelBackgroundColor: p.cross }, horzLine: { color: p.cross, labelBackgroundColor: p.cross } },
+      localization: { locale: 'en-IN' },
+    });
+    // Prices span 0.00001 to 100,000 USDT, so each price series formats its own values
+    const pf = { priceFormat: { type: 'custom', formatter: (v) => fmtPrice(v), minMove: 0.00000001 } };
+    const candles = chart.addSeries(CandlestickSeries, { ...pf, upColor: p.up, downColor: p.down, wickUpColor: p.up, wickDownColor: p.down, borderVisible: false });
+    candles.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: 0.2 } });
+    const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
+    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
+    const line = { ...pf, lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false };
+    const fast = chart.addSeries(LineSeries, { ...line, color: p.fast });
+    const slow = chart.addSeries(LineSeries, { ...line, color: p.slow, lineStyle: LineStyle.Dashed });
+    const bbU = chart.addSeries(LineSeries, { ...line, lineWidth: 1, color: p.bb });
+    const bbM = chart.addSeries(LineSeries, { ...line, lineWidth: 1, color: p.bb, lineStyle: LineStyle.Dotted });
+    const bbL = chart.addSeries(LineSeries, { ...line, lineWidth: 1, color: p.bb });
+    const markers = createSeriesMarkers(candles, []);
+    let rsiS = null;
+    if (cfgRef.current.rsiOn) {
+      rsiS = chart.addSeries(LineSeries, { ...line, color: p.rsi, lastValueVisible: true, priceFormat: { type: 'custom', formatter: (v) => v.toFixed(1), minMove: 0.1 } }, 1);
+      for (const [v, st] of [[70, LineStyle.Dashed], [50, LineStyle.Dotted], [30, LineStyle.Dashed]]) {
+        rsiS.createPriceLine({ price: v, color: p.lvl, lineWidth: 1, lineStyle: st, axisLabelVisible: v !== 50, title: '' });
+      }
+      rsiS.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
+      rsiS.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
+      chart.panes()[1]?.setHeight(130);
+    }
+    chart.subscribeCrosshairMove((param) => {
+      if (param.time == null) return setHover(null);
+      const c = param.seriesData.get(candles);
+      setHover(c ? { time: param.time, ...c, v: param.seriesData.get(volume)?.value } : null);
+    });
+    chartRef.current = chart;
+    sRef.current = { candles, volume, fast, slow, bbU, bbM, bbL, markers, rsiS, p };
+    if (candlesRef.current.length) draw(true);
+    return () => {
+      chart.remove();
+      chartRef.current = null;
+    };
+  }, [cfg.rsiOn, dark]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Indicators → series. full=true redraws everything; otherwise only the last point.
+  function draw(full) {
+    const s = sRef.current;
+    const cs = candlesRef.current;
+    if (!s.candles || !cs.length) return;
+    const c = cfgRef.current;
+    const ind = {
+      fast: c.emaOn ? ema(cs, c.emaFast) : [],
+      slow: c.emaOn ? ema(cs, c.emaSlow) : [],
+      bb: c.bbOn ? bollinger(cs, c.bbPeriod, c.bbMult) : { upper: [], middle: [], lower: [] },
+      rsi: c.rsiOn ? rsi(cs, c.rsi) : [],
+    };
+    const prevLen = indRef.current?.len;
+    indRef.current = { ...ind, len: cs.length };
+    const n = cs.length - 1;
+    const pt = (arr, i) => (arr[i] == null ? null : { time: shift(cs[i].time), value: arr[i] });
+    const lineData = (arr) => arr.map((v, i) => (v == null ? null : { time: shift(cs[i].time), value: v })).filter(Boolean);
+    const vol = (k) => ({ time: shift(k.time), value: k.quoteVolume ?? k.volume, color: `${k.close >= k.open ? s.p.up : s.p.down}55` });
+    const pairs = [[s.fast, ind.fast], [s.slow, ind.slow], [s.bbU, ind.bb.upper], [s.bbM, ind.bb.middle], [s.bbL, ind.bb.lower], ...(s.rsiS ? [[s.rsiS, ind.rsi]] : [])];
+    if (full || prevLen !== cs.length) {
+      s.candles.setData(cs.map((k) => ({ time: shift(k.time), open: k.open, high: k.high, low: k.low, close: k.close })));
+      s.volume.setData(cs.map(vol));
+      for (const [series, arr] of pairs) series.setData(lineData(arr));
+      const xs = c.emaOn ? crossovers(cs, ind.fast, ind.slow, cs.length - 1) : []; // completed candles only
+      s.markers.setMarkers(
+        xs.map((x) =>
+          x.type === 'bull'
+            ? { time: shift(x.time), position: 'belowBar', shape: 'arrowUp', color: s.p.up, text: 'Bull' }
+            : { time: shift(x.time), position: 'aboveBar', shape: 'arrowDown', color: s.p.down, text: 'Bear' }
+        )
+      );
+    } else {
+      const k = cs[n];
+      s.candles.update({ time: shift(k.time), open: k.open, high: k.high, low: k.low, close: k.close });
+      s.volume.update(vol(k));
+      for (const [series, arr] of pairs) {
+        const v = pt(arr, n);
+        if (v) series.update(v);
+      }
+    }
+    force((x) => x + 1);
+  }
+
+  // History, then live candles
+  useEffect(() => {
+    let alive = true;
+    let stop = () => {};
+    let poll = null;
+    setLoaded(false);
+    setError('');
+    candlesRef.current = [];
+    klines(symbol, interval, HISTORY[interval])
+      .then((cs) => {
+        if (!alive) return;
+        candlesRef.current = cs;
+        setLoaded(true);
+        draw(true);
+        const n = cs.length;
+        if (n) chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (interval === '1h' ? 150 : 180)), to: n + 4 });
+        const pollLatest = async () => {
+          try {
+            const last = await klines(symbol, interval, 2);
+            for (const k of last) {
+              const at = candlesRef.current.findIndex((c) => c.time === k.time);
+              if (at >= 0) candlesRef.current[at] = k;
+              else if (k.time > candlesRef.current[candlesRef.current.length - 1].time) candlesRef.current.push(k);
+            }
+            draw(false);
+          } catch {}
+        };
+        stop = stream(
+          [`${symbol.toLowerCase()}@kline_${interval}`],
+          (d) => {
+            if (!alive || !d?.k || d.s !== symbol) return;
+            const before = candlesRef.current.length;
+            applyKline(candlesRef.current, d.k);
+            draw(candlesRef.current.length !== before);
+          },
+          (st) => {
+            if (!alive) return;
+            setLive(st);
+            clearInterval(poll);
+            poll = st === 'down' ? setInterval(pollLatest, 10_000) : null;
+          }
+        );
+      })
+      .catch((e) => alive && setError(e.message));
+    return () => {
+      alive = false;
+      stop();
+      clearInterval(poll);
+    };
+  }, [symbol, interval]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Settings changed → redraw
+  useEffect(() => {
+    if (candlesRef.current.length) draw(true);
+  }, [cfg.emaOn, cfg.emaFast, cfg.emaSlow, cfg.bbOn, cfg.bbPeriod, cfg.bbMult, cfg.rsi]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Legend: hovered candle, or the latest
+  const cs = candlesRef.current;
+  const ind = indRef.current;
+  const idx = hover ? cs.findIndex((c) => shift(c.time) === hover.time) : cs.length - 1;
+  const k = idx >= 0 ? cs[idx] : null;
+  const at = (arr) => (ind && idx >= 0 && arr?.[idx] != null ? arr[idx] : null);
+  const chg = k ? k.close - k.open : 0;
+  const when = k ? new Date((k.time + IST_OFFSET) * 1000).toISOString() : '';
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const legendTime = k ? `${Number(when.slice(8, 10))} ${MONTHS[Number(when.slice(5, 7)) - 1]} ${when.slice(0, 4)}${interval === '1h' ? ` ${when.slice(11, 16)}` : ''}` : '';
+  const rsiNow = at(ind?.rsi);
+  const list = symbols.includes(symbol) ? symbols : [symbol, ...symbols];
+
+  return (
+    <section className="card tk-chart crypto-chart">
+      <div className="card-head">
+        <div className="tk-chart-title">
+          <select className="select crypto-sym" value={symbol} onChange={(e) => onSymbol(e.target.value)} aria-label="Coin">
+            {list.map((s) => <option key={s} value={s}>{coin(s)}/USDT</option>)}
+          </select>
+          <b className="mono tk-chart-ltp">{fmtPrice(tick?.price ?? cs[cs.length - 1]?.close)}</b>
+          {tick?.changePct != null && <span className={`mono ${tone(tick.changePct)}`}>{tick.changePct > 0 ? '+' : ''}{tick.changePct.toFixed(2)}% 24h</span>}
+        </div>
+        <div className="form-actions">
+          <span className={`crypto-live ${live}`}>{live === 'live' ? '● Live' : live === 'down' ? 'Refreshing every 10 s' : 'Connecting…'}</span>
+          <div className="seg" role="group" aria-label="Candle interval">
+            {['1h', '1d'].map((v) => (
+              <button key={v} className={interval === v ? 'on' : ''} onClick={() => setInterval(v)}>{v === '1h' ? '1 hour' : '1 day'}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="tk-ema-bar ind-bar">
+        <IndGroup on={cfg.emaOn} onToggle={(v) => setCfg({ emaOn: v })} label="EMA" swatches={['fast', 'slow']}>
+          <NumIn label="Fast" value={cfg.emaFast} min={2} max={199} onChange={(v) => v < cfg.emaSlow && setCfg({ emaFast: v })} />
+          <NumIn label="Slow" value={cfg.emaSlow} min={3} max={400} onChange={(v) => v > cfg.emaFast && setCfg({ emaSlow: v })} />
+        </IndGroup>
+        <IndGroup on={cfg.bbOn} onToggle={(v) => setCfg({ bbOn: v })} label="Bollinger" swatches={['bb']}>
+          <NumIn label="Length" value={cfg.bbPeriod} min={2} max={200} onChange={(v) => setCfg({ bbPeriod: v })} />
+          <NumIn label="StdDev" value={cfg.bbMult} min={0.5} max={5} step={0.5} onChange={(v) => setCfg({ bbMult: v })} />
+        </IndGroup>
+        <IndGroup on={cfg.rsiOn} onToggle={(v) => setCfg({ rsiOn: v })} label="RSI" swatches={['rsi']}>
+          <NumIn label="Length" value={cfg.rsi} min={2} max={100} onChange={(v) => setCfg({ rsi: v })} />
+        </IndGroup>
+      </div>
+
+      <div className="tk-chart-legend mono" aria-live="off">
+        {k ? (
+          <>
+            <span className="muted-cell">{legendTime}</span>
+            <span>O <b>{fmtPrice(k.open)}</b></span>
+            <span>H <b>{fmtPrice(k.high)}</b></span>
+            <span>L <b>{fmtPrice(k.low)}</b></span>
+            <span>C <b className={tone(chg)}>{fmtPrice(k.close)}</b></span>
+            <span className={tone(chg)}>{k.open ? `${chg >= 0 ? '+' : ''}${((chg / k.open) * 100).toFixed(2)}%` : ''}</span>
+            <span>Vol <b>{fmtCompact(k.quoteVolume ?? k.volume)}</b></span>
+            {cfg.emaOn && (
+              <>
+                <span><i className="ema-swatch fast" />EMA {cfg.emaFast} <b>{fmtPrice(at(ind?.fast))}</b></span>
+                <span><i className="ema-swatch slow" />EMA {cfg.emaSlow} <b>{fmtPrice(at(ind?.slow))}</b></span>
+              </>
+            )}
+            {cfg.bbOn && (
+              <span><i className="ema-swatch bb" />BB <b>{fmtPrice(at(ind?.bb?.upper))}</b> / <b>{fmtPrice(at(ind?.bb?.middle))}</b> / <b>{fmtPrice(at(ind?.bb?.lower))}</b></span>
+            )}
+            {cfg.rsiOn && (
+              <span>
+                <i className="ema-swatch rsi" />RSI {cfg.rsi} <b className={rsiNow >= 70 ? 'neg' : rsiNow <= 30 ? 'pos' : ''}>{rsiNow != null ? rsiNow.toFixed(1) : '—'}</b>
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="muted-cell">{error ? '' : `Loading ${interval === '1h' ? '4 months of hourly' : 'daily'} candles…`}</span>
+        )}
+      </div>
+      <div className={`tk-chart-box crypto-box ${cfg.rsiOn ? 'with-rsi' : ''}`} ref={box} />
+      {error && <p className="status err tk-chart-err">{error}</p>}
+      <div className="foot">
+        {loaded ? `${cs.length.toLocaleString('en-IN')} ${interval === '1h' ? 'hourly' : 'daily'} candles` : 'Loading'} from Binance spot · Indian time ·
+        EMA crosses marked on completed candles · RSI panel lines at 70 / 50 / 30
+        <span className="tk-chart-credit">
+          Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a> Lightweight Charts™ · Copyright © TradingView, Inc.
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function IndGroup({ on, onToggle, label, swatches, children }) {
+  return (
+    <span className={`ind-group ${on ? '' : 'off'}`}>
+      <label className="switch">
+        <input type="checkbox" checked={on} onChange={(e) => onToggle(e.target.checked)} />
+        <span>
+          {swatches.map((s) => <i key={s} className={`ema-swatch ${s}`} />)}
+          {label}
+        </span>
+      </label>
+      {on && children}
+    </span>
+  );
+}
+
+function NumIn({ label, value, min, max, step = 1, onChange }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  return (
+    <label className="tk-ema-in">
+      {label}
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          const v = Number(e.target.value);
+          if (Number.isFinite(v) && v >= min && v <= max) onChange(v);
+        }}
+        aria-label={label}
+      />
+    </label>
+  );
+}

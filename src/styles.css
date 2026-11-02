@@ -797,3 +797,38 @@ table.journal th button { white-space: nowrap; }
 .crumb { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.03em; text-transform: uppercase; margin-bottom: 2px; }
 .nav-group-items .sidenav-item.active::before { left: -22px; }
 .nav-collapsed .nav-group-items .sidenav-item.active::before { left: -10px; }
+
+/* Crypto */
+.crypto-add { max-width: 380px; }
+.crypto-add .tk-results { display: grid; }
+.tk-result { all: unset; display: flex; align-items: center; gap: 12px; padding: 7px 9px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+.tk-result:hover:not(:disabled) { background: var(--surface-2); }
+.tk-result:disabled { opacity: 0.5; cursor: default; }
+.tk-result > :nth-child(2) { margin-left: auto; }
+.tk-result-note { padding: 8px 9px; font-size: 13px; color: var(--muted); }
+table.crypto-table th { padding: 10px; font-size: 12px; font-weight: 600; color: var(--muted); }
+table.crypto-table th:first-child { padding-left: 16px; }
+.ind-tag { display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+.ind-tag.hot { color: var(--neg); background: color-mix(in srgb, var(--neg) 12%, transparent); }
+.ind-tag.cold { color: var(--pos); background: color-mix(in srgb, var(--pos) 12%, transparent); }
+.ind-tag.new { color: #b45309; background: color-mix(in srgb, #f59e0b 14%, transparent); }
+@media (prefers-color-scheme: dark) { .ind-tag.new { color: #fcd34d; } }
+td > .ind-tag:first-child { margin-left: 0; }
+.ind-trend { font-size: 13px; font-weight: 650; white-space: nowrap; }
+.ind-trend.bull { color: var(--pos); } .ind-trend.bear { color: var(--neg); }
+.bb-meter { display: inline-flex; align-items: center; gap: 8px; }
+.bb-track { position: relative; width: 70px; height: 6px; border-radius: 3px; background: linear-gradient(90deg, color-mix(in srgb, var(--pos) 40%, transparent), var(--surface-2) 50%, color-mix(in srgb, var(--neg) 40%, transparent)); border: 1px solid var(--border); }
+.bb-track i { position: absolute; top: -3px; width: 3px; height: 12px; margin-left: -1.5px; border-radius: 2px; background: var(--text); }
+:root { --bb-line: #0e7490; --rsi-line: #b45309; }
+@media (prefers-color-scheme: dark) { :root { --bb-line: #22d3ee; --rsi-line: #fbbf24; } }
+.ema-swatch.bb { border-color: var(--bb-line); }
+.ema-swatch.rsi { border-color: var(--rsi-line); }
+.crypto-sym { font-family: var(--mono); font-weight: 700; font-size: 15px; padding: 5px 8px; }
+.crypto-live { font-size: 12.5px; color: var(--muted); }
+.crypto-live.live { color: var(--pos); font-weight: 600; }
+.crypto-box.with-rsi { height: 560px; }
+@media (max-width: 560px) { .crypto-box.with-rsi { height: 440px; } }
+.ind-bar { gap: 10px 22px; }
+.ind-group { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ind-group.off .switch span { color: var(--muted); }
+.ind-group .switch .ema-swatch { margin-right: 4px; }

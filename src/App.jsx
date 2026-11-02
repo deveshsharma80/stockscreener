@@ -4,6 +4,7 @@ import Screener from './Screener.jsx';
 import Ticker from './Ticker.jsx';
 import Pnl from './Pnl.jsx';
 import Journal from './Journal.jsx';
+import Crypto from './Crypto.jsx';
 import FirstHits from './FirstHits.jsx';
 import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
 import { SECRET_KEY as TICKER_SECRET, api as tickerApi, price as num, store as tickerStore } from './Ticker.jsx';
@@ -54,10 +55,20 @@ export const SECTIONS = [
       ['trades', 'Fills', 'Every Buy / Sell fill, with brokerage and P&L'],
     ],
   },
+  {
+    id: 'crypto',
+    label: 'Coins',
+    icon: 'coin',
+    tabs: [
+      ['watchlist', 'Watchlist', 'Binance prices with RSI, EMA trend and Bollinger readings'],
+      ['chart', 'Chart', 'Hourly and daily candles with EMA, Bollinger Bands and RSI'],
+    ],
+  },
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.
 export const GROUPS = [
   { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper'] },
+  { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto'] },
 ];
 const groupOf = (sectionId) => GROUPS.find((g) => g.sections.includes(sectionId)) || GROUPS[0];
 const GROUPS_KEY = 'stockhits.navGroupsClosed';
@@ -86,7 +97,8 @@ function useRoute() {
     // normalise legacy / partial links to #/section/tab
     const sync = () => {
       const r = parseRoute();
-      const want = `#/${r.section.id}/${r.tab}`;
+      const query = window.location.hash.split('?')[1]; // e.g. ?s=BTCUSDT on the crypto chart
+      const want = `#/${r.section.id}/${r.tab}${query ? `?${query}` : ''}`;
       if (window.location.hash !== want) history.replaceState(null, '', want);
       setRoute(r);
     };
@@ -865,7 +877,7 @@ export default function App() {
         <div className="sidenav-foot">
           <div className={`nav-status ${marketOpen ? 'ok' : ''}`} title="NSE session 09:15–15:30 IST, Mon–Fri">
             <i />
-            <span className="sidenav-label">{marketOpen ? 'Market open' : 'Market closed'}</span>
+            <span className="sidenav-label">{marketOpen ? 'NSE market open' : 'NSE market closed'}</span>
           </div>
           {dhan && (
             <a
@@ -911,6 +923,7 @@ export default function App() {
           {section.id === 'signals' && <Signals tab={tab} actionsEl={actionsEl} />}
           {section.id === 'market' && <Ticker subview={tab} actionsEl={actionsEl} />}
           {section.id === 'trades' && <Journal subview={tab} />}
+          {section.id === 'crypto' && <Crypto subview={tab} actionsEl={actionsEl} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
         </div>
       </main>
@@ -1025,6 +1038,13 @@ function Icon({ name }) {
         <svg {...p}>
           <rect x="3" y="6" width="18" height="14" rx="2.5" />
           <path d="M3 10h18M16 15h2M7 6V4.5h10V6" />
+        </svg>
+      );
+    case 'coin':
+      return (
+        <svg {...p}>
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="M9.5 8h3.8a2 2 0 0 1 0 4H9.5zM9.5 12h4.3a2 2 0 0 1 0 4H9.5zM9.5 8v8M11 6.5V8M11 16v1.5M13 6.5V8M13 16v1.5" />
         </svg>
       );
     case 'journal':
