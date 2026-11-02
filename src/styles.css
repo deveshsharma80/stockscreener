@@ -777,3 +777,23 @@ table.journal th button { white-space: nowrap; }
 .pos-exits .exit-tag:first-child { margin-left: 0; }
 .pos-exits .link { font-size: 12px; }
 @media (prefers-color-scheme: dark) { .exit-tag.SL { color: #f87171; } .exit-tag.TP { color: #4ade80; } }
+
+/* Left menu: parent groups (NSE Market, …) */
+.nav-group { display: grid; gap: 2px; }
+.nav-group + .nav-group { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.nav-group-head {
+  all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; cursor: pointer;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap;
+}
+.nav-group-head:hover { background: var(--surface-2); color: var(--text); }
+.nav-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.nav-group-mark { flex: none; min-width: 30px; height: 20px; padding: 0 5px; box-sizing: border-box; display: grid; place-items: center; border-radius: 5px; font-size: 10px; font-weight: 800; letter-spacing: 0.03em; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
+.nav-group.here .nav-group-mark { background: var(--accent-tint); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); }
+.nav-chev { margin-left: auto; font-size: 11px; }
+.nav-group-items { display: grid; gap: 2px; padding-left: 10px; }
+.nav-collapsed .nav-group-head { justify-content: center; padding-left: 0; padding-right: 0; }
+.nav-collapsed .nav-group-items { padding-left: 0; }
+@media (max-width: 900px) { .nav-collapsed .nav-group-head { justify-content: flex-start; padding-left: 10px; } .nav-collapsed .nav-group-items { padding-left: 10px; } }
+.crumb { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.03em; text-transform: uppercase; margin-bottom: 2px; }
+.nav-group-items .sidenav-item.active::before { left: -22px; }
+.nav-collapsed .nav-group-items .sidenav-item.active::before { left: -10px; }

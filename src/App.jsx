@@ -55,6 +55,20 @@ export const SECTIONS = [
     ],
   },
 ];
+// Left-menu parent groups (markets). Each section belongs to one group.
+export const GROUPS = [
+  { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper'] },
+];
+const groupOf = (sectionId) => GROUPS.find((g) => g.sections.includes(sectionId)) || GROUPS[0];
+const GROUPS_KEY = 'stockhits.navGroupsClosed';
+function readClosedGroups() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
 // Links from earlier versions keep working
 const LEGACY = { '': 'signals/hits', hits: 'signals/hits', screener: 'signals/screener', ticker: 'market/watchlist', pnl: 'paper/overview' };
 
@@ -749,6 +763,18 @@ export default function App() {
   const [actionsEl, setActionsEl] = useState(null);
   const [marketOpen, setMarketOpen] = useState(marketOpenNow);
   const [dhan, setDhan] = useState(null); // reported by the Market section
+  const [closedGroups, setClosedGroups] = useState(readClosedGroups);
+  const group = groupOf(section.id);
+  const toggleGroup = (id) =>
+    setClosedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(GROUPS_KEY, JSON.stringify([...next]));
+      } catch {}
+      return next;
+    });
 
   useEffect(() => {
     const t = setInterval(() => setMarketOpen(marketOpenNow()), 30_000);
@@ -761,7 +787,7 @@ export default function App() {
   }, []);
   useEffect(() => setDrawer(false), [section.id, tab]);
   useEffect(() => {
-    document.title = `${section.tabs.find((t) => t[0] === tab)[1]} · ${section.label} · Stock Hits`;
+    document.title = `${section.tabs.find((t) => t[0] === tab)[1]} · ${section.label} · ${groupOf(section.id).label} · Stock Hits`;
   }, [section, tab]);
 
   const toggleCollapsed = () =>
@@ -783,7 +809,7 @@ export default function App() {
           <Icon name="menu" />
         </button>
         <span className="brand-name">Stock Hits</span>
-        <span className="mobilebar-section">{section.label}</span>
+        <span className="mobilebar-section">{group.short} · {section.label}</span>
       </header>
       <div className="nav-scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
 
@@ -797,18 +823,43 @@ export default function App() {
         </div>
 
         <nav className="sidenav-list">
-          {SECTIONS.map((s) => (
-            <a
-              key={s.id}
-              href={`#/${s.id}/${s.tabs[0][0]}`}
-              className={`sidenav-item ${s.id === section.id ? 'active' : ''}`}
-              aria-current={s.id === section.id ? 'page' : undefined}
-              title={collapsed ? s.label : undefined}
-            >
-              <Icon name={s.icon} />
-              <span className="sidenav-label">{s.label}</span>
-            </a>
-          ))}
+          {GROUPS.map((g) => {
+            const here = g.id === group.id;
+            const open = here || !closedGroups.has(g.id); // the group you're in always stays open
+            return (
+              <div key={g.id} className={`nav-group ${here ? 'here' : ''}`}>
+                <button
+                  className="nav-group-head"
+                  onClick={() => toggleGroup(g.id)}
+                  aria-expanded={open}
+                  title={collapsed ? g.label : here ? `${g.label} (current)` : undefined}
+                >
+                  <span className="nav-group-mark">{g.short}</span>
+                  <span className="sidenav-label">{g.label}</span>
+                  <span className="sidenav-label nav-chev" aria-hidden="true">{open ? '▾' : '▸'}</span>
+                </button>
+                {open && (
+                  <div className="nav-group-items">
+                    {g.sections.map((id) => {
+                      const s = SECTIONS.find((x) => x.id === id);
+                      return (
+                        <a
+                          key={s.id}
+                          href={`#/${s.id}/${s.tabs[0][0]}`}
+                          className={`sidenav-item ${s.id === section.id ? 'active' : ''}`}
+                          aria-current={s.id === section.id ? 'page' : undefined}
+                          title={collapsed ? `${g.label} › ${s.label}` : undefined}
+                        >
+                          <Icon name={s.icon} />
+                          <span className="sidenav-label">{s.label}</span>
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="sidenav-foot">
@@ -840,6 +891,7 @@ export default function App() {
         <div className="pagehead">
           <div className="pagehead-row">
             <div className="pagehead-titles">
+              <div className="crumb">{group.label}</div>
               <h1>{section.label}</h1>
               <p className="sub">{current[2]}</p>
             </div>
