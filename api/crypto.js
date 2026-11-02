@@ -6,6 +6,8 @@
 // GET  ?action=scan&minPct=40                 daily mover scan: every USDT pair whose daily
 //      candle is up ≥ minPct % gets added to the watchlist (for a scheduler, every 15 min)
 // GET  ?action=scan-hits                      coins found by the scan (latest first)
+// GET  ?action=movers-history                 saved Big Movers history (one-time scan of past days)
+// POST {action:"movers-history", meta, rows}   save a new Big Movers scan (replaces the old one)
 // GET  ?action=binance&path=/api/v3/klines&q=<query>
 //      fallback proxy for Binance public market data, used only if the
 //      browser can't reach Binance directly. Binance blocks some US servers;
@@ -20,6 +22,48 @@ const SYMBOL_RE = /^[A-Z0-9]{2,20}USDT$/;
 const DEFAULT = DEFAULT_COINS;
 const PROXY_PATHS = new Set(['/api/v3/klines', '/api/v3/ticker/24hr', '/api/v3/ticker/price', '/api/v3/exchangeInfo']);
 const HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com'];
+const HISTORY_TABLE = 'crypto_movers_history';
+const MAX_HISTORY_ROWS = 10000;
+const num = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+
+/** Validate a Big Movers scan sent by the page (computed in the browser from Binance candles). */
+function cleanHistory(body) {
+  const m = body?.meta || {};
+  if (!Array.isArray(body?.rows)) throw new HttpError(400, 'rows must be a list');
+  if (body.rows.length > MAX_HISTORY_ROWS) throw new HttpError(400, `At most ${MAX_HISTORY_ROWS} rows`);
+  const rows = body.rows.map((r) => {
+    const symbol = String(r.symbol || '').toUpperCase();
+    const day = String(r.day || '');
+    if (!SYMBOL_RE.test(symbol) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new HttpError(400, 'Bad row in the scan');
+    return {
+      symbol,
+      day,
+      open: num(r.open),
+      close: num(r.close),
+      high: num(r.high),
+      low: num(r.low),
+      ratio: num(r.ratio),
+      pct: num(r.pct),
+      highRatio: num(r.highRatio),
+      quoteVolume: num(r.quoteVolume),
+      next1: num(r.next1),
+      next7: num(r.next7),
+      max7: num(r.max7),
+    };
+  });
+  return {
+    meta: {
+      runAt: new Date().toISOString(),
+      months: num(m.months),
+      minRatio: num(m.minRatio),
+      from: String(m.from || '').slice(0, 10),
+      to: String(m.to || '').slice(0, 10),
+      checked: num(m.checked),
+      failed: Array.isArray(m.failed) ? m.failed.slice(0, 50).map(String) : [],
+    },
+    rows,
+  };
+}
 
 export default async function handler(req, res) {
   cors(res);
@@ -70,6 +114,18 @@ export default async function handler(req, res) {
           return rows.map((r) => r.symbol);
         });
         return res.json({ ok: true, symbols });
+      }
+      case 'GET movers-history': {
+        const [saved] = await readTable(HISTORY_TABLE).catch(() => []);
+        return res.json({ ok: true, ...(saved || { meta: null, rows: [] }) });
+      }
+      case 'POST movers-history': {
+        const saved = cleanHistory(body);
+        await updateTable(HISTORY_TABLE, (rows) => {
+          rows.length = 0;
+          rows.push(saved);
+        });
+        return res.json({ ok: true, ...saved });
       }
       case 'GET binance':
         return res.json({ ok: true, data: await proxy(String(req.query?.path || ''), String(req.query?.q || '')) });

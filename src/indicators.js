@@ -87,3 +87,36 @@ export function readings(candles, cfg) {
     bb: { upper: bb.upper[n], middle: bb.middle[n], lower: bb.lower[n], pctB: bb.pctB[n] },
   };
 }
+
+const r4 = (v) => Math.round(v * 10000) / 10000;
+
+/** Big days in one coin's daily candles (completed days inside [fromSec, toSec)). */
+export function bigDays(symbol, candles, { minRatio, fromSec, toSec }) {
+  const out = [];
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    if (c.time < fromSec || c.time >= toSec || !(c.open > 0)) continue;
+    const ratio = r4(c.close / c.open);
+    if (ratio < minRatio) continue;
+    const after = (n) => (candles[i + n] ? candles[i + n] : null);
+    const next7 = candles.slice(i + 1, i + 8);
+    out.push({
+      symbol,
+      day: new Date(c.time * 1000).toISOString().slice(0, 10),
+      open: c.open,
+      close: c.close,
+      high: c.high,
+      low: c.low,
+      ratio,
+      pct: Math.round((ratio - 1) * 10000) / 100,
+      highRatio: r4(c.high / c.open),
+      quoteVolume: c.quoteVolume,
+      // what happened next (vs this day's close); null when the days haven't happened yet
+      next1: after(1) ? Math.round((after(1).close / c.close - 1) * 10000) / 100 : null,
+      next7: after(7) ? Math.round((after(7).close / c.close - 1) * 10000) / 100 : null,
+      max7: next7.length ? Math.round((Math.max(...next7.map((k) => k.high)) / c.close - 1) * 10000) / 100 : null,
+    });
+  }
+  return out;
+}
+

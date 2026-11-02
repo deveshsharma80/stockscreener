@@ -5,6 +5,7 @@ import Ticker from './Ticker.jsx';
 import Pnl from './Pnl.jsx';
 import Journal from './Journal.jsx';
 import Crypto from './Crypto.jsx';
+import Movers from './Movers.jsx';
 import FirstHits from './FirstHits.jsx';
 import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
 import { SECRET_KEY as TICKER_SECRET, api as tickerApi, price as num, store as tickerStore } from './Ticker.jsx';
@@ -64,11 +65,17 @@ export const SECTIONS = [
       ['chart', 'Chart', 'Hourly and daily candles with EMA, Bollinger Bands and RSI'],
     ],
   },
+  {
+    id: 'movers',
+    label: 'Big Movers',
+    icon: 'rocket',
+    tabs: [['history', 'History', 'Past days when a coin closed far above its open, and what happened next']],
+  },
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.
 export const GROUPS = [
   { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper'] },
-  { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto'] },
+  { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'movers'] },
 ];
 const groupOf = (sectionId) => GROUPS.find((g) => g.sections.includes(sectionId)) || GROUPS[0];
 const GROUPS_KEY = 'stockhits.navGroupsClosed';
@@ -924,6 +931,7 @@ export default function App() {
           {section.id === 'market' && <Ticker subview={tab} actionsEl={actionsEl} />}
           {section.id === 'trades' && <Journal subview={tab} />}
           {section.id === 'crypto' && <Crypto subview={tab} actionsEl={actionsEl} />}
+          {section.id === 'movers' && <Movers />}
           {section.id === 'paper' && <Pnl subview={tab} />}
         </div>
       </main>
@@ -1038,6 +1046,13 @@ function Icon({ name }) {
         <svg {...p}>
           <rect x="3" y="6" width="18" height="14" rx="2.5" />
           <path d="M3 10h18M16 15h2M7 6V4.5h10V6" />
+        </svg>
+      );
+    case 'rocket':
+      return (
+        <svg {...p}>
+          <path d="M3 17l5-5 4 4 8-9" />
+          <path d="M14 7h6v6" />
         </svg>
       );
     case 'coin':

@@ -30,6 +30,9 @@ const symbolFromHash = () => (window.location.hash.split('?')[1] || '').match(/(
 const coin = (s) => s.replace(/USDT$/, '');
 const tone = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
 
+export async function cryptoApi(secret, action, { method = 'GET', body } = {}) {
+  return api(secret, action, { method, body });
+}
 async function api(secret, action, { method = 'GET', body } = {}) {
   const r = await fetch(`/api/crypto${method === 'GET' ? `?action=${action}` : ''}`, {
     method,
