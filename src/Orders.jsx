@@ -91,7 +91,7 @@ export function OrderModal({ secret, symbol, initialSide = 'BUY', refPrice = nul
   const value = valid ? t * q : 0;
   const margin = value / lev;
   const charges = (value * pct) / 100;
-  const available = info?.account?.available ?? null;
+  const available = info?.pot?.available ?? info?.account?.available ?? null; // the Equity Intraday share of the money
   // Selling against a long (or buying against a short) frees margin instead
   const held = info?.position?.qty || 0;
   const closing = held && Math.sign(held) !== (side === 'BUY' ? 1 : -1) ? Math.min(q, Math.abs(held)) : 0;
@@ -199,7 +199,7 @@ export function OrderModal({ secret, symbol, initialSide = 'BUY', refPrice = nul
           <div><dt>Order value</dt><dd className="mono">{valid ? `₹${price.format(value)}` : '—'}</dd></div>
           <div><dt>Margin ({lev}×)</dt><dd className="mono">{valid ? `₹${price.format(margin)}` : '—'}</dd></div>
           <div><dt>Brokerage ({pct}%)</dt><dd className="mono">{valid ? `₹${price.format(charges)}` : '—'}</dd></div>
-          <div><dt>Available</dt><dd className={`mono ${short ? 'neg' : ''}`}>{available != null ? `₹${price.format(available)}` : '…'}</dd></div>
+          <div><dt>Intraday money</dt><dd className={`mono ${short ? 'neg' : ''}`}>{available != null ? `₹${price.format(available)}` : '…'}</dd></div>
         </dl>
         {held !== 0 && (
           <p className="om-note">You hold {held > 0 ? `+${held}` : held} @ ₹{price.format(info.position.avg)}{closing ? ` — this ${side === 'BUY' ? 'buy' : 'sell'} closes ${closing === Math.abs(held) ? 'it' : `${closing} of it`}.` : '.'}</p>

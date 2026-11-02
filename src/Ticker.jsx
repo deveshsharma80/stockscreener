@@ -71,10 +71,19 @@ export const fmtExpiry = (e) => {
   return `${Number(d)} ${MONTHS[Number(m) - 1]} ${y.slice(2)}`;
 };
 // Paper trade types (mirrors lib/paper.js)
-export const PRODUCT_LABEL = { OPT_BUY: 'Options Buying', EQ_INTRADAY: 'Equity Intraday', OTHER: 'Other' };
-export const PRODUCT_SHORT = { OPT_BUY: 'OPT BUY', EQ_INTRADAY: 'INTRADAY', OTHER: 'OTHER' };
+export const PRODUCT_LABEL = { EQ_INTRADAY: 'Equity Intraday', IDX_OPT_BUY: 'Index Options Buying', STK_OPT_BUY: 'Equity Options Buying', OPT_BUY: 'Options Buying', OTHER: 'Other' };
+export const PRODUCT_SHORT = { EQ_INTRADAY: 'INTRADAY', IDX_OPT_BUY: 'INDEX OPT', STK_OPT_BUY: 'STOCK OPT', OPT_BUY: 'OPT BUY', OTHER: 'OTHER' };
+/** The three trade types, each with its own share of the paper money. */
+export const TRADE_TYPES = ['EQ_INTRADAY', 'IDX_OPT_BUY', 'STK_OPT_BUY'];
+const isOptBuy = (p) => p === 'IDX_OPT_BUY' || p === 'STK_OPT_BUY';
 export const productFor = (r) =>
-  String(r.instrument || '').startsWith('OPT') ? 'OPT_BUY' : r.segment === 'NSE_EQ' || r.segment === 'BSE_EQ' ? 'EQ_INTRADAY' : null;
+  String(r.instrument || '').toUpperCase() === 'OPTSTK'
+    ? 'STK_OPT_BUY'
+    : String(r.instrument || '').startsWith('OPT')
+      ? 'IDX_OPT_BUY'
+      : r.segment === 'NSE_EQ' || r.segment === 'BSE_EQ'
+        ? 'EQ_INTRADAY'
+        : null;
 
 export function describe(row) {
   if (row.instrument?.startsWith('OPT')) return `${row.underlying || row.symbol.split('-')[0]} ${row.strike} ${row.optionType}`;
@@ -664,14 +673,17 @@ function TradeTicket({ row, initialSide, onPlace, onClose, pct, account, product
   const opening = qty - closing;
   const need = ltp != null ? (opening * ltp) / L + (qty * ltp * pct) / 100 : null;
   const released = closing && ltp != null ? (closing * pos.avg) / lev(pos.product) + closing * (ltp - pos.avg) * Math.sign(held) : 0;
-  const canAfford = !account || need == null || opening === 0 || need <= account.available + released;
+  // Each trade type trades from its own share of the money
+  const pot = account?.buckets?.[product];
+  const avail = pot ? pot.available : account?.available;
+  const canAfford = !account || need == null || opening === 0 || need <= avail + released;
   // Rules (the server enforces them too)
   const ruleError =
     product !== allowed
       ? `This instrument can only be traded as ${PRODUCT_LABEL[allowed]}.`
-      : product === 'OPT_BUY' && side === 'SELL' && held <= 0
+      : isOptBuy(product) && side === 'SELL' && held <= 0
         ? "Options Buying: you can only sell options you hold — option writing isn't allowed."
-        : product === 'OPT_BUY' && side === 'SELL' && qty > held
+        : isOptBuy(product) && side === 'SELL' && qty > held
           ? `Options Buying: you hold ${held}; sell at most ${held}.`
           : '';
 
@@ -693,7 +705,7 @@ function TradeTicket({ row, initialSide, onPlace, onClose, pct, account, product
   return (
     <form className={`tk-ticket ${side === 'BUY' ? 'is-buy' : 'is-sell'}`} onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
       <div className="seg tk-product" role="group" aria-label="Trade type">
-        {['OPT_BUY', 'EQ_INTRADAY'].map((p) => (
+        {TRADE_TYPES.map((p) => (
           <button
             key={p}
             type="button"
@@ -728,8 +740,8 @@ function TradeTicket({ row, initialSide, onPlace, onClose, pct, account, product
         {pos?.qty ? <> · Holding {pos.qty > 0 ? `+${pos.qty}` : pos.qty} @ {price.format(pos.avg)}</> : null}
         {account && (
           <>
-            {' '}· Available ₹{price.format(account.available)}
-            {L > 1 && <> (buying power ₹{price.format(account.available * L)})</>}
+            {' '}· {PRODUCT_LABEL[product]} money available ₹{price.format(avail)}
+            {L > 1 && <> (buying power ₹{price.format(avail * L)})</>}
           </>
         )}
       </span>
@@ -759,7 +771,7 @@ function PositionsCard({ book, quotes, onExit, exits, onChart }) {
   const chargesToday = book?.totals?.chargesToday ?? 0;
   const dayTotal = openSum + bookedToday - chargesToday;
   const rate = (k, fallback) => book?.products?.[k]?.brokeragePct ?? fallback;
-  const pctText = `Options Buying ${rate('OPT_BUY', 1)}% and Equity Intraday ${rate('EQ_INTRADAY', 0.025)}% of trade value`;
+  const pctText = `Equity Intraday ${rate('EQ_INTRADAY', 0.025)}%, Index and Equity Options Buying ${rate('IDX_OPT_BUY', 1)}% of trade value`;
   const tone = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
 
   const exit = async (p) => {
@@ -789,9 +801,17 @@ function PositionsCard({ book, quotes, onExit, exits, onChart }) {
       </div>
       {book?.account && (
         <div className="tk-funds">
-          <span>Available <b className="mono">₹{price.format(book.account.available)}</b></span>
-          {book.account.buyingPower && (
-            <span>Intraday buying power <b className="mono">₹{price.format(book.account.buyingPower.EQ_INTRADAY)}</b></span>
+          {book.account.buckets ? (
+            TRADE_TYPES.map((k) => {
+              const b = book.account.buckets[k];
+              return (
+                <span key={k} title={`${b.label}: ₹${price.format(b.allocated)} allocated${b.leverage > 1 ? `, buying power ₹${price.format(b.buyingPower)}` : ''}`}>
+                  <span className={`tk-prod ${k}`}>{PRODUCT_SHORT[k]}</span> <b className="mono">₹{price.format(b.available)}</b>
+                </span>
+              );
+            })
+          ) : (
+            <span>Available <b className="mono">₹{price.format(book.account.available)}</b></span>
           )}
           <span>Margin used <b className="mono">₹{price.format(book.account.used)}</b></span>
           <span>Starting amount <b className="mono">₹{price.format(book.account.startingCapital)}</b>{book.account.isDefault && ' (default)'}</span>

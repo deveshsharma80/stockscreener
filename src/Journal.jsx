@@ -245,7 +245,8 @@ export default function Journal({ subview = 'all' }) {
           <select className="select" value={type} onChange={(e) => setType(e.target.value)} aria-label="Trade type">
             <option value="">All trade types</option>
             <option value="EQ_INTRADAY">Equity Intraday</option>
-            <option value="OPT_BUY">Options Buying</option>
+            <option value="IDX_OPT_BUY">Index Options Buying</option>
+            <option value="STK_OPT_BUY">Equity Options Buying</option>
             {data?.trips?.some((t) => t.product === 'OTHER') && <option value="OTHER">Other</option>}
           </select>
           <select className="select" value={result} onChange={(e) => setResult(e.target.value)} aria-label="Result">

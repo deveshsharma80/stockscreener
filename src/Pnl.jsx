@@ -24,7 +24,7 @@ export default function Pnl({ subview = 'overview' }) {
   const [book, setBook] = useState(null);
   const [quotes, setQuotes] = useState({});
   const [view, setView] = useState('daily');
-  const [type, setType] = useState('ALL'); // ALL | OPT_BUY | EQ_INTRADAY | OTHER
+  const [type, setType] = useState('ALL'); // ALL | EQ_INTRADAY | IDX_OPT_BUY | STK_OPT_BUY | OTHER
   const [dayFilter, setDayFilter] = useState('');
   const [shown, setShown] = useState(PAGE);
   const [resetStep, setResetStep] = useState(0);
@@ -94,7 +94,7 @@ export default function Pnl({ subview = 'overview' }) {
 
   // Reports for the chosen trade type (falls back to combined for older servers)
   const reports = book.reports || { ALL: { daily: book.daily, weekly: book.weekly, totals: book.totals } };
-  const types = ['ALL', 'OPT_BUY', 'EQ_INTRADAY', ...(reports.OTHER ? ['OTHER'] : [])];
+  const types = ['ALL', 'EQ_INTRADAY', 'IDX_OPT_BUY', 'STK_OPT_BUY', ...(reports.OTHER ? ['OTHER'] : [])];
   const sel = reports[type] || reports.ALL;
   const empty = { daily: [], weekly: [], totals: { ...reports.ALL.totals, realizedToday: 0, chargesToday: 0, netToday: 0, realizedWeek: 0, chargesWeek: 0, netWeek: 0, realizedAll: 0, chargesAll: 0, netAll: 0, trades: 0, wins: 0, losses: 0 } };
   const R = reports[type] ? sel : empty;
@@ -179,8 +179,38 @@ export default function Pnl({ subview = 'overview' }) {
           <div><dt>Return</dt><dd className={`mono ${tone(returnPct)}`}>{signed.format(returnPct)}%</dd></div>
           <div><dt>Available to trade</dt><dd className="mono">₹{price.format(acct.available)}</dd></div>
           <div><dt>Margin used</dt><dd className="mono">₹{price.format(acct.used)}</dd></div>
-          {acct.buyingPower && <div><dt>Intraday buying power</dt><dd className="mono">₹{price.format(acct.buyingPower.EQ_INTRADAY)}</dd></div>}
         </dl>
+        {acct.buckets && (
+          <div className="table-wrap pnl-pots">
+            <table className="ticker">
+              <thead>
+                <tr>
+                  <th>Money for</th>
+                  <th className="num">Allocated</th>
+                  <th className="num">Net booked</th>
+                  <th className="num">Margin used</th>
+                  <th className="num">Available</th>
+                  <th className="num">Buying power</th>
+                </tr>
+              </thead>
+              <tbody>
+                {['EQ_INTRADAY', 'IDX_OPT_BUY', 'STK_OPT_BUY'].map((k) => {
+                  const b = acct.buckets[k];
+                  return (
+                    <tr key={k}>
+                      <td><span className={`tk-prod ${k}`}>{PRODUCT_LABEL[k]}</span></td>
+                      <td className="num mono">₹{price.format(b.allocated)}</td>
+                      <td className={`num mono ${tone(b.netBooked)}`}>{signed.format(b.netBooked)}</td>
+                      <td className="num mono">₹{price.format(b.used)}</td>
+                      <td className="num mono"><b>₹{price.format(b.available)}</b></td>
+                      <td className="num mono muted-cell">{b.leverage > 1 ? `₹${price.format(b.buyingPower)} (${b.leverage}×)` : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
         {mode === 'edit' && (
           <form className="tk-conn-form pnl-acct-form" onSubmit={saveAmount}>
             <label>
@@ -189,7 +219,7 @@ export default function Pnl({ subview = 'overview' }) {
             </label>
             <button className="btn primary" type="submit" disabled={!(amountNum >= 1000)}>Save</button>
             <button type="button" className="link" onClick={() => setMode('')}>Cancel</button>
-            <span className="muted small">Keeps your trades; only the starting amount changes.</span>
+            <span className="muted small">Keeps your trades; the new amount is split into three equal parts, one per trade type.</span>
           </form>
         )}
         {mode === 'reset' && (
@@ -209,12 +239,13 @@ export default function Pnl({ subview = 'overview' }) {
               </>
             )}
             <button type="button" className="link" onClick={() => setMode('')}>Cancel</button>
-            <span className="muted small">Clears every paper trade, position and report. Your watchlist and real Dhan account are not touched.</span>
+            <span className="muted small">Clears every paper trade, position and report, and splits the amount into three equal parts (one per trade type). Your watchlist and real Dhan account are not touched.</span>
           </div>
         )}
         {acctMsg && <p className={`status ${acctMsg.kind}`}>{acctMsg.text}</p>}
         <p className="muted small pnl-acct-note">
-          Available = starting amount + net booked P&amp;L − margin used. Options Buying uses the full premium; Equity Intraday uses ¼ of the position value ({book.products?.EQ_INTRADAY?.leverage ?? 4}× leverage), so intraday buying power is {book.products?.EQ_INTRADAY?.leverage ?? 4}× your available funds.
+          The starting amount is split into three equal parts: Equity Intraday, Index Options Buying and Equity Options Buying. Each trade type can only use its own part:
+          available = allocated + that type's net booked P&amp;L − its margin used. Options Buying uses the full premium; Equity Intraday uses ¼ of the position value ({book.products?.EQ_INTRADAY?.leverage ?? 4}× leverage).
         </p>
       </section>
 
@@ -273,7 +304,7 @@ export default function Pnl({ subview = 'overview' }) {
           onPickDay={view === 'daily' ? (d) => (setDayFilter(d), setShown(PAGE), (window.location.hash = '#/paper/trades')) : null}
         />
         <div className="foot">
-          Booked P&amp;L by {view === 'daily' ? 'trading day' : 'week, Monday to Sunday'}, Indian time. Net = gross − brokerage (per buy and per sell: Options Buying {book.products?.OPT_BUY?.brokeragePct ?? 1}%, Equity Intraday {book.products?.EQ_INTRADAY?.brokeragePct ?? 0.025}% of trade value). Bars and cumulative use net.
+          Booked P&amp;L by {view === 'daily' ? 'trading day' : 'week, Monday to Sunday'}, Indian time. Net = gross − brokerage (per buy and per sell: Index and Equity Options Buying {book.products?.IDX_OPT_BUY?.brokeragePct ?? 1}%, Equity Intraday {book.products?.EQ_INTRADAY?.brokeragePct ?? 0.025}% of trade value). Bars and cumulative use net.
           {open.length > 0 && ' Open positions are shown separately for the current period.'}
         </div>
       </section>
@@ -437,7 +468,7 @@ function ReportTable({ rows, labelKey, label, current, openPnl, onPickDay }) {
 
 // Side-by-side summary of each trade type (always shows all types).
 function ByType({ reports, openPnlFor, selected, onPick }) {
-  const keys = ['OPT_BUY', 'EQ_INTRADAY', ...(reports.OTHER ? ['OTHER'] : []), 'ALL'];
+  const keys = ['EQ_INTRADAY', 'IDX_OPT_BUY', 'STK_OPT_BUY', ...(reports.OTHER ? ['OTHER'] : []), 'ALL'];
   return (
     <section className="card">
       <div className="card-head">

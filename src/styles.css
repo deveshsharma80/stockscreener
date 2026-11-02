@@ -882,3 +882,13 @@ table.mv-table th.num button { margin-left: auto; text-align: right; }
 .login-remember { font-size: 13.5px; }
 .login-btn { padding: 10px 14px; font-size: 15px; }
 .login .status { margin: 0; }
+
+/* Trade types: Index / Equity Options Buying, money per type */
+.tk-prod.IDX_OPT_BUY { color: #7c3aed; border-color: color-mix(in srgb, #7c3aed 35%, transparent); }
+.tk-prod.STK_OPT_BUY { color: #be185d; border-color: color-mix(in srgb, #be185d 35%, transparent); }
+@media (prefers-color-scheme: dark) { .tk-prod.IDX_OPT_BUY { color: #c4b5fd; } .tk-prod.STK_OPT_BUY { color: #f9a8d4; } }
+.tk-product button { white-space: nowrap; }
+.pnl-pots { margin-top: 14px; border: 1px solid var(--border); border-radius: 10px; }
+.pnl-pots table th { padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.pnl-pots table td { padding: 8px 12px; }
+.tk-funds .tk-prod { margin-right: 4px; }

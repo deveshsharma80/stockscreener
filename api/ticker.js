@@ -15,7 +15,8 @@
 // Paper trading (dummy fills at the live LTP, stored in db/paper_trades.json):
 // GET  ?action=paper                                  positions, trades, daily/weekly P&L
 // POST {action:"trade", key, side:"BUY"|"SELL", qty, product}
-//      product: "OPT_BUY" (Options Buying) | "EQ_INTRADAY" (Equity Intraday, 4× leverage)
+//      product: "EQ_INTRADAY" (Equity Intraday, 4× leverage) | "IDX_OPT_BUY" (Index Options Buying)
+//               | "STK_OPT_BUY" (Equity Options Buying). Each type trades from its own third of the money.
 //      qty in shares (F&O: multiple of lot size)
 // POST {action:"paper-capital", amount}               set the starting amount (keeps trades)
 // POST {action:"paper-reset", amount?}                delete all paper trades, optionally set a new starting amount
@@ -292,6 +293,7 @@ async function placePaperTrade({ key, side, qty, product, orderId }) {
   const pos = book.positions.find((p) => p.key === key && p.qty !== 0);
   const closesOnly = pos && (side === 'BUY' ? pos.qty < 0 : pos.qty > 0) && qty <= Math.abs(pos.qty);
   product = closesOnly ? pos.product : String(product || productFor(inst) || '').toUpperCase();
+  if (product === 'OPT_BUY') product = productFor(inst); // older pages had a single options type
   if (!closesOnly) {
     const problem = validateOrder(book, inst, { key, side, qty, product });
     if (problem) throw new HttpError(400, problem, { kind: 'rules' });
@@ -302,7 +304,7 @@ async function placePaperTrade({ key, side, qty, product, orderId }) {
   if (!funds.ok) {
     const f = (v) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
     const what = funds.leverage > 1 ? `margin at ${funds.leverage}× + brokerage` : 'value + brokerage';
-    throw new HttpError(400, `Not enough paper funds for ${PRODUCTS[product].label}: this order needs ₹${f(funds.required)} (${what}), available ₹${f(funds.available)}.`, { kind: 'funds' });
+    throw new HttpError(400, `Not enough paper funds in your ${PRODUCTS[product].label} money: this order needs ₹${f(funds.required)} (${what}), available ₹${f(funds.available)}.`, { kind: 'funds' });
   }
   return addTrade({ inst, side, qty, price: quote.ltp, marketOpen: marketStatus().open, product, orderId });
 }
@@ -390,6 +392,7 @@ async function resolveForOrder(params) {
     quoteError,
     position: pos && { qty: pos.qty, avg: pos.avg, product: pos.product },
     account: book.account,
+    pot: book.account.buckets?.[ORDER_PRODUCT] || null, // trigger orders use the Equity Intraday money
     product: { id: ORDER_PRODUCT, ...PRODUCTS[ORDER_PRODUCT] },
     validUntil: sessionEnd(),
     market: marketStatus(),
@@ -416,7 +419,7 @@ async function placeTriggerOrder(body) {
   const funds = checkFunds(book, { key, side, qty, price: triggerPrice, product: ORDER_PRODUCT });
   if (!funds.ok) {
     const f = (v) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-    throw new HttpError(400, `Not enough paper funds: at ₹${f(triggerPrice)} this order needs ₹${f(funds.required)} (margin at ${funds.leverage}× + brokerage), available ₹${f(funds.available)}.`, { kind: 'funds' });
+    throw new HttpError(400, `Not enough paper funds in your Equity Intraday money: at ₹${f(triggerPrice)} this order needs ₹${f(funds.required)} (margin at ${funds.leverage}× + brokerage), available ₹${f(funds.available)}.`, { kind: 'funds' });
   }
 
   // Into the Ticker, so it shows up on the Market pages
