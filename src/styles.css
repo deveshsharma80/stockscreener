@@ -988,3 +988,11 @@ tr.pot-reset-row > td { background: var(--surface-2); padding: 4px 12px 10px !im
 .qt-marks button.on, .qt-marks button:hover:not(:disabled) { color: #fff; background: #2563eb; border-color: #2563eb; }
 .qt-marks .qt-exitall { margin-left: auto; color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
 .qt-marks .qt-exitall:hover { background: var(--danger) !important; border-color: var(--danger) !important; }
+
+/* Watchlist row: single Trade button (subtle teal, opens the floating trade box) */
+.btn.tk-row-trade {
+  padding: 4px 14px; font-size: 13px; font-weight: 650; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.btn.tk-row-trade:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.btn.tk-row-trade.on { background: color-mix(in srgb, var(--accent) 26%, transparent); border-color: var(--accent); }

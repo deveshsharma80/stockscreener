@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ORDERS_EVENT, OrdersCard, emitOrders } from './Orders.jsx';
+import QuickTrade from './QuickTrade.jsx';
 
 // The chart library is only downloaded when a chart is opened.
 const Chart = lazy(() => import('./Chart.jsx'));
@@ -133,7 +134,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
   const [busyKey, setBusyKey] = useState('');
   const [pageError, setPageError] = useState('');
   const [book, setBook] = useState(null); // paper trading: positions, trades, reports
-  const [ticket, setTicket] = useState(null); // { key, side } — open Buy/Sell ticket
+  const [tradeKey, setTradeKey] = useState(null); // instrument whose floating trade box is open (rows + chart share it)
   const [chartKey, setChartKey] = useState(null); // instrument whose candle chart is open
   const [orders, setOrders] = useState([]); // trigger orders (Market › Orders)
 
@@ -264,7 +265,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
     try {
       const j = await api(secret, 'remove', { method: 'POST', body: { key } });
       setRows(j.rows);
-      if (ticket?.key === key) setTicket(null);
+      if (tradeKey === key) setTradeKey(null);
     } catch (e) {
       setPageError(e.message);
     } finally {
@@ -325,7 +326,6 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
     });
   }, [rows, quotes, tab, sort, posByKey]);
 
-  const colCount = 7;
 
   if (checking) return <p className="tk-note">Opening ticker…</p>;
   if (!unlocked) {
@@ -353,7 +353,8 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
       </button>
     </th>
   );
-  const openTicket = (key, side) => setTicket((t) => (t?.key === key && t.side === side ? null : { key, side }));
+  const toggleTrade = (key) => setTradeKey((k) => (k === key ? null : key));
+  const tradeRow = tradeKey ? rows.find((r) => r.key === tradeKey) || positions.find((p) => p.key === tradeKey) : null;
 
   return (
     <>
@@ -469,16 +470,10 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
                 <TickerRow
                   key={r.key}
                   row={r}
-                  colCount={colCount}
                   onExitPos={() => placeTrade(r.key, r.pos.qty > 0 ? 'SELL' : 'BUY', Math.abs(r.pos.qty))}
                   busy={busyKey === r.key}
-                  ticket={ticket?.key === r.key ? ticket.side : null}
-                  onTicket={(side) => openTicket(r.key, side)}
-                  onCloseTicket={() => setTicket(null)}
-                  onPlace={(side, qty, product) => placeTrade(r.key, side, qty, product)}
-                  brokeragePct={book?.brokeragePct ?? 1}
-                  account={book?.account}
-                  products={book?.products}
+                  tradeOpen={tradeKey === r.key}
+                  onTrade={() => toggleTrade(r.key)}
                   onRemove={() => remove(r.key)}
                   chartOpen={chartKey === r.key}
                   onChart={() => {
@@ -514,14 +509,26 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
             onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))}
             exits={exitsByKey.get(chartKey) || null}
             onSetExit={(kind, level) => setExit(chartKey, kind, level)}
-            onTrade={(side, qty, product) => placeTrade(chartKey, side, qty, product)}
-            account={book?.account}
-            products={book?.products}
+            tradeOpen={tradeKey === chartKey}
+            onToggleTrade={() => toggleTrade(chartKey)}
           />
         </Suspense>
       )}
 
         </>
+      )}
+
+      {tradeRow && subview === 'watchlist' && (
+        <QuickTrade
+          key={tradeKey}
+          row={tradeRow}
+          quote={quotes[tradeKey]}
+          position={positions.find((p) => p.key === tradeKey && p.qty !== 0) || null}
+          account={book?.account}
+          products={book?.products}
+          onPlace={(side, qty, product) => placeTrade(tradeKey, side, qty, product)}
+          onClose={() => setTradeKey(null)}
+        />
       )}
 
       {subview === 'orders' && <OrdersCard secret={secret} orders={orders} quotes={quotes} market={market} onChange={setOrders} />}
@@ -594,7 +601,7 @@ function ExitPosButton({ pos, label, onExit }) {
 
 // ------------------------------------------------------------------ row with tick flash + trade ticket
 
-function TickerRow({ row, colCount, onExitPos, busy, ticket, onTicket, onCloseTicket, onPlace, onRemove, brokeragePct, account, products, chartOpen, onChart }) {
+function TickerRow({ row, onExitPos, busy, tradeOpen, onTrade, onRemove, chartOpen, onChart }) {
   const q = row.q;
   const prev = useRef(null);
   const [flash, setFlash] = useState({ dir: '', n: 0 });
@@ -614,7 +621,7 @@ function TickerRow({ row, colCount, onExitPos, busy, ticket, onTicket, onCloseTi
 
   return (
     <>
-      <tr className={ticket ? 'tk-has-ticket' : ''}>
+      <tr className={tradeOpen ? 'tk-has-ticket' : ''}>
         <td className="tk-inst">
           <div className="tk-name">{describe(row)}</div>
           <div className="tk-sub">
@@ -645,10 +652,9 @@ function TickerRow({ row, colCount, onExitPos, busy, ticket, onTicket, onCloseTi
         </td>
         <td className="tk-trade">
           {tradable ? (
-            <span className="tk-bs">
-              <button className={`bs buy ${ticket === 'BUY' ? 'on' : ''}`} onClick={() => onTicket('BUY')} aria-expanded={ticket === 'BUY'}>Buy</button>
-              <button className={`bs sell ${ticket === 'SELL' ? 'on' : ''}`} onClick={() => onTicket('SELL')} aria-expanded={ticket === 'SELL'}>Sell</button>
-            </span>
+            <button className={`btn tk-row-trade ${tradeOpen ? 'on' : ''}`} onClick={onTrade} aria-pressed={tradeOpen} title={`Buy or sell ${describe(row)}`}>
+              Trade
+            </button>
           ) : (
             <span className="muted-dash" title={kind === 'idx' ? "Indices can't be traded" : 'Paper trading supports Options Buying and Equity Intraday only'}>—</span>
           )}
@@ -676,123 +682,7 @@ function TickerRow({ row, colCount, onExitPos, busy, ticket, onTicket, onCloseTi
           </span>
         </td>
       </tr>
-      {ticket && (
-        <tr className="tk-ticket-row">
-          <td colSpan={colCount}>
-            <TradeTicket row={row} initialSide={ticket} onPlace={onPlace} onClose={onCloseTicket} pct={brokeragePct} account={account} products={products} />
-          </td>
-        </tr>
-      )}
     </>
-  );
-}
-
-function TradeTicket({ row, initialSide, onPlace, onClose, pct, account, products }) {
-  const fno = kindOf(row.segment) === 'fno';
-  const allowed = productFor(row); // each instrument has exactly one valid trade type
-  const [product, setProduct] = useState(allowed);
-  const lev = (p) => products?.[p]?.leverage ?? (p === 'EQ_INTRADAY' ? 4 : 1);
-  const L = lev(product);
-  pct = products?.[product]?.brokeragePct ?? pct; // brokerage depends on the trade type
-  const lot = Number(row.lotSize) || 1;
-  const [side, setSide] = useState(initialSide);
-  const [units, setUnits] = useState('1'); // lots for F&O, shares for equity
-  const [status, setStatus] = useState(null);
-  useEffect(() => setSide(initialSide), [initialSide]);
-
-  const n = Math.max(0, Math.floor(Number(units) || 0));
-  const qty = fno ? n * lot : n;
-  const ltp = row.q?.ltp;
-  const pos = row.pos;
-  const busy = status?.kind === 'busy';
-
-  // Funds check (the server checks again at the fill price).
-  const held = pos?.qty || 0;
-  const signedQty = side === 'BUY' ? qty : -qty;
-  const closing = held && Math.sign(held) !== Math.sign(signedQty) ? Math.min(qty, Math.abs(held)) : 0;
-  const opening = qty - closing;
-  const need = ltp != null ? (opening * ltp) / L + (qty * ltp * pct) / 100 : null;
-  const released = closing && ltp != null ? (closing * pos.avg) / lev(pos.product) + closing * (ltp - pos.avg) * Math.sign(held) : 0;
-  // Each trade type trades from its own share of the money
-  const pot = account?.buckets?.[product];
-  const avail = pot ? pot.available : account?.available;
-  const canAfford = !account || need == null || opening === 0 || need <= avail + released;
-  // Rules (the server enforces them too)
-  const ruleError =
-    product !== allowed
-      ? `This instrument can only be traded as ${PRODUCT_LABEL[allowed]}.`
-      : isOptBuy(product) && side === 'SELL' && held <= 0
-        ? "Options Buying: you can only sell options you hold — option writing isn't allowed."
-        : isOptBuy(product) && side === 'SELL' && qty > held
-          ? `Options Buying: you hold ${held}; sell at most ${held}.`
-          : '';
-
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!qty) return;
-    setStatus({ kind: 'busy', text: 'Placing…' });
-    try {
-      const t = await onPlace(side, qty, product);
-      setStatus({
-        kind: 'ok',
-        text: `${t.side === 'BUY' ? 'Bought' : 'Sold'} ${t.qty} @ ${price.format(t.price)} · brokerage ₹${price.format(t.charges)}${t.marketOpen ? '' : ' (market closed — last price)'}`,
-      });
-    } catch (err) {
-      setStatus({ kind: 'err', text: err.message });
-    }
-  };
-
-  return (
-    <form className={`tk-ticket ${side === 'BUY' ? 'is-buy' : 'is-sell'}`} onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
-      <div className="seg tk-product" role="group" aria-label="Trade type">
-        {TRADE_TYPES.map((p) => (
-          <button
-            key={p}
-            type="button"
-            className={product === p ? 'on' : ''}
-            onClick={() => setProduct(p)}
-            disabled={p !== allowed}
-            title={p !== allowed ? `Not available for this instrument — it can only be traded as ${PRODUCT_LABEL[allowed]}` : undefined}
-          >
-            {PRODUCT_LABEL[p]}
-            {p === 'EQ_INTRADAY' && <span className="tk-lev">{lev('EQ_INTRADAY')}×</span>}
-          </button>
-        ))}
-      </div>
-      <div className="seg tk-side" role="group" aria-label="Side">
-        <button type="button" className={side === 'BUY' ? 'on buy' : ''} onClick={() => setSide('BUY')}>Buy</button>
-        <button type="button" className={side === 'SELL' ? 'on sell' : ''} onClick={() => setSide('SELL')}>Sell</button>
-      </div>
-      <label className="tk-qty">
-        {fno ? 'Lots' : 'Qty'}
-        <input type="number" min="1" step="1" value={units} onChange={(e) => (setUnits(e.target.value), setStatus(null))} autoFocus />
-      </label>
-      <span className="tk-ticket-info">
-        {fno && <>= {qty.toLocaleString('en-IN')} qty · </>}
-        Market ≈ {ltp != null ? price.format(ltp) : '…'}
-        {ltp != null && qty > 0 && (
-          <>
-            {' '}· Value ≈ ₹{price.format(ltp * qty)}
-            {L > 1 && opening > 0 && <> · Margin ≈ ₹{price.format((ltp * opening) / L)} ({L}×)</>}
-            {' '}· Brokerage ≈ ₹{price.format((ltp * qty * pct) / 100)} ({pct}%)
-          </>
-        )}
-        {pos?.qty ? <> · Holding {pos.qty > 0 ? `+${pos.qty}` : pos.qty} @ {price.format(pos.avg)}</> : null}
-        {account && (
-          <>
-            {' '}· {PRODUCT_LABEL[product]} money available ₹{price.format(avail)}
-            {L > 1 && <> (buying power ₹{price.format(avail * L)})</>}
-          </>
-        )}
-      </span>
-      {ruleError && <span className="status err">{ruleError}</span>}
-      {!ruleError && !canAfford && <span className="status err">Not enough funds: needs ₹{price.format(need)}</span>}
-      <button className={`btn ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={busy || !qty || !canAfford || Boolean(ruleError)}>
-        {side === 'BUY' ? 'Buy' : 'Sell'} {qty ? qty.toLocaleString('en-IN') : ''} at market
-      </button>
-      <button type="button" className="btn btn-close" onClick={onClose}>Close</button>
-      {status && <span className={`status ${status.kind}`}>{status.text}</span>}
-    </form>
   );
 }
 
