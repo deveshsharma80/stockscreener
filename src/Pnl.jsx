@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, fmtExpiry, kindOf, money, price, segLabel, signed, store } from './Ticker.jsx';
 
 // Paper-trading P&L reports: daily and weekly booked P&L, plus live open P&L.
@@ -31,6 +31,10 @@ export default function Pnl({ subview = 'overview' }) {
   const [mode, setMode] = useState(''); // '' | 'edit' | 'reset'
   const [amount, setAmount] = useState('');
   const [acctMsg, setAcctMsg] = useState(null);
+  // Reset one money pot (one trade type)
+  const [potEdit, setPotEdit] = useState(null);
+  const [potAmount, setPotAmount] = useState('');
+  const [potStep, setPotStep] = useState(0);
 
   const load = useCallback(async (s) => {
     try {
@@ -112,6 +116,19 @@ export default function Pnl({ subview = 'overview' }) {
   const accountValue = acct.startingCapital + acct.netBooked + openPnlAll;
   const returnPct = ((accountValue - acct.startingCapital) / acct.startingCapital) * 100;
   const amountNum = Number(String(amount).replace(/[,₹\s]/g, ''));
+
+  // Reset one money pot (one trade type)
+  const potNum = Number(String(potAmount).replace(/[,₹\s]/g, ''));
+  const resetPot = async (k) => {
+    try {
+      setBook(await api(secret, 'paper-reset-bucket', { method: 'POST', body: { product: k, amount: potNum } }));
+      setPotEdit(null);
+      setAcctMsg({ kind: 'ok', text: `${PRODUCT_LABEL[k]} money reset to ₹${price.format(potNum)}. The other trade types are unchanged; history is kept.` });
+    } catch (err) {
+      setPotStep(0);
+      setAcctMsg({ kind: 'err', text: err.message });
+    }
+  };
 
   const startMode = (m) => {
     setMode(m);
@@ -195,20 +212,53 @@ export default function Pnl({ subview = 'overview' }) {
                   <th className="num">Margin used</th>
                   <th className="num">Available</th>
                   <th className="num">Buying power</th>
+                  <th aria-label="Reset" />
                 </tr>
               </thead>
               <tbody>
                 {['EQ_INTRADAY', 'IDX_OPT_BUY', 'STK_OPT_BUY'].map((k) => {
                   const b = acct.buckets[k];
                   return (
-                    <tr key={k}>
-                      <td><span className={`tk-prod ${k}`}>{PRODUCT_LABEL[k]}</span></td>
+                    <Fragment key={k}>
+                    <tr>
+                      <td>
+                        <span className={`tk-prod ${k}`}>{PRODUCT_LABEL[k]}</span>
+                        {b.since && <div className="muted small pot-since">since {new Date(b.since).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}</div>}
+                      </td>
                       <td className="num mono">₹{price.format(b.allocated)}</td>
                       <td className={`num mono ${tone(b.netBooked)}`}>{signed.format(b.netBooked)}</td>
                       <td className="num mono">₹{price.format(b.used)}</td>
                       <td className="num mono"><b>₹{price.format(b.available)}</b></td>
                       <td className="num mono muted-cell">{b.leverage > 1 ? `₹${price.format(b.buyingPower)} (${b.leverage}×)` : '—'}</td>
+                      <td className="tk-x">
+                        <button className="btn pot-reset-btn" onClick={() => (setPotEdit(potEdit === k ? null : k), setPotAmount(String(b.allocated)), setPotStep(0), setAcctMsg(null))}>
+                          Reset…
+                        </button>
+                      </td>
                     </tr>
+                    {potEdit === k && (
+                      <tr className="pot-reset-row">
+                        <td colSpan={7}>
+                          <div className="tk-conn-form pnl-acct-form">
+                            <label>
+                              New {PRODUCT_LABEL[k]} amount (₹)
+                              <input inputMode="numeric" value={potAmount} onChange={(e) => (setPotAmount(e.target.value), setPotStep(0))} autoFocus />
+                            </label>
+                            {potStep === 0 ? (
+                              <button className="btn danger-outline" onClick={() => setPotStep(1)} disabled={!(potNum >= 0) || String(potAmount).trim() === ''}>Reset this money…</button>
+                            ) : (
+                              <>
+                                <span className="dp-ask">Start {PRODUCT_LABEL[k]} again from now with ₹{price.format(potNum)}? The other two stay as they are; all trades stay in history.</span>
+                                <button className="btn danger" onClick={() => resetPot(k)}>Yes, reset</button>
+                              </>
+                            )}
+                            <button type="button" className="link" onClick={() => setPotEdit(null)}>Cancel</button>
+                            <span className="muted small">Only {PRODUCT_LABEL[k]}: its available money restarts at this amount and counts trades from now on. Exit its open positions first.</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -248,7 +298,7 @@ export default function Pnl({ subview = 'overview' }) {
         )}
         {acctMsg && <p className={`status ${acctMsg.kind}`}>{acctMsg.text}</p>}
         <p className="muted small pnl-acct-note">
-          The starting amount is split into three equal parts: Equity Intraday, Index Options Buying and Equity Options Buying. Each trade type can only use its own part:
+          The money is split into three parts: Equity Intraday, Index Options Buying and Equity Options Buying (equal thirds when you set or reset the whole account; use a row's Reset… to give one type a new amount on its own). Each trade type can only use its own part:
           available = allocated + that type's net booked P&amp;L − its margin used. Options Buying uses the full premium; Equity Intraday uses ¼ of the position value ({book.products?.EQ_INTRADAY?.leverage ?? 4}× leverage).
         </p>
       </section>

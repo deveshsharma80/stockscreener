@@ -34,10 +34,12 @@
 // Trade journal (fills grouped into entry → exit trades, with your notes):
 // GET  ?action=journal                                trades + notes
 // POST {action:"journal-note", id, note}              save a note ("" deletes it)
+// POST {action:"journal-delete", ids:[tradeId…]}      delete closed trades (their fills and notes)
+// POST {action:"paper-reset-bucket", product, amount} reset one trade type's money (keeps history)
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
-import { PRODUCTS, addTrade, checkFunds, computeBook, productFor, readAccount, readTrades, resetAccount, setCapital, validateOrder } from '../lib/paper.js';
-import { readNotes, roundTrips, saveNote } from '../lib/journal.js';
+import { PRODUCTS, addTrade, checkFunds, computeBook, deleteTrades, productFor, readAccount, readTrades, resetAccount, resetBucket, setCapital, validateOrder } from '../lib/paper.js';
+import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../lib/journal.js';
 import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import {
   DhanError,
@@ -117,6 +119,25 @@ export default async function handler(req, res) {
         if (!removing && !roundTrips(await readTrades()).some((t) => t.id === id)) throw new HttpError(404, 'That trade no longer exists');
         const note = await saveNote(id, body.note);
         return res.json({ ok: true, id, note });
+      }
+      case 'POST journal-delete': {
+        const ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).map(String))].slice(0, 2000);
+        if (!ids.length) throw new HttpError(400, 'Select at least one trade');
+        const fillIds = fillsToDelete(await readTrades(), ids);
+        const removed = await deleteTrades(fillIds);
+        await deleteNotes(ids);
+        const [trades, notes] = await Promise.all([readTrades(), readNotes()]);
+        return res.json({ ok: true, deleted: ids.length, fillsRemoved: removed, trips: roundTrips(trades), notes });
+      }
+      case 'POST paper-reset-bucket': {
+        const product = String(body.product || '');
+        const book = await paperBook();
+        const open = book.positions.filter((p) => p.qty !== 0 && p.product === product);
+        if (open.length) {
+          throw new HttpError(400, `Exit your open ${PRODUCTS[product]?.label || product} positions first (${open.map((p) => p.symbol).slice(0, 5).join(', ')}).`, { kind: 'open-positions' });
+        }
+        await resetBucket(product, body.amount);
+        return res.json({ ok: true, ...(await paperBook()) });
       }
       case 'GET resolve':
         return res.json({ ok: true, ...(await resolveForOrder(req.query || {})) });

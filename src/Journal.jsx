@@ -48,6 +48,9 @@ export default function Journal({ subview = 'all' }) {
   const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState(null); // expanded row
   const [editId, setEditId] = useState(null); // row whose note is being edited
+  const [selected, setSelected] = useState(() => new Set()); // trade ids ticked for deleting
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [delMsg, setDelMsg] = useState(null); // { kind, text }
 
   const load = useCallback(async (s) => {
     try {
@@ -165,6 +168,30 @@ export default function Journal({ subview = 'all' }) {
     return j.note;
   };
 
+  // Delete closed trades (their fills and notes). Removes their P&L from reports and balances.
+  const deleteTrips = async (ids) => {
+    setDelMsg({ kind: 'busy', text: 'Deleting…' });
+    try {
+      const j = await api(secret, 'journal-delete', { method: 'POST', body: { ids } });
+      setData((d) => ({ ...d, trips: j.trips, notes: j.notes }));
+      setSelected(new Set());
+      setConfirmDel(false);
+      setOpenId(null);
+      setDelMsg({ kind: 'ok', text: `Deleted ${j.deleted} ${j.deleted === 1 ? 'trade' : 'trades'}.` });
+      return true;
+    } catch (e) {
+      setDelMsg({ kind: 'err', text: e.message });
+      return false;
+    }
+  };
+  const toggleSel = (id) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
   const exportCsv = () => {
     const head = ['Date', 'Instrument', 'Type', 'Side', 'Qty', 'EntryTime', 'AvgEntry', 'ExitTime', 'AvgExit', 'Status', 'Held', 'GrossPnL', 'Brokerage', 'NetPnL', 'PnLPct', 'MarginPct', 'Source', 'Note'];
     const esc = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
@@ -204,7 +231,11 @@ export default function Journal({ subview = 'all' }) {
       </button>
     </th>
   );
-  const COLS = 11;
+  const COLS = 12;
+  const pageClosed = shown.filter((t) => t.status === 'CLOSED');
+  const allPageSel = pageClosed.length > 0 && pageClosed.every((t) => selected.has(t.id));
+  const selTrips = (data?.trips || []).filter((t) => selected.has(t.id));
+  const selNet = selTrips.reduce((a, t) => a + t.net, 0);
 
   return (
     <>
@@ -257,11 +288,50 @@ export default function Journal({ subview = 'all' }) {
           </select>
           <button className="btn push" onClick={exportCsv} disabled={!sorted.length}>Export CSV</button>
         </div>
+        {(selected.size > 0 || delMsg) && (
+          <div className={`jr-selbar ${selected.size ? 'on' : ''}`}>
+            {selected.size > 0 && (
+              <>
+                <b>{selected.size} selected</b>
+                <span className="muted-cell">net {signed.format(selNet)}</span>
+                {confirmDel ? (
+                  <>
+                    <span className="dp-ask">Delete {selected.size === 1 ? 'this trade' : `these ${selected.size} trades`}? {selected.size === 1 ? 'Its' : 'Their'} P&amp;L leaves your reports{selTrips.some((t) => t.note) ? (selected.size === 1 ? ' and its note is deleted' : ' and their notes are deleted') : ''}. This can’t be undone.</span>
+                    <button className="btn danger" onClick={() => deleteTrips([...selected])} disabled={delMsg?.kind === 'busy'}>Yes, delete</button>
+                    <button className="link" onClick={() => setConfirmDel(false)}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <button className="btn danger-outline" onClick={() => setConfirmDel(true)}>Delete…</button>
+                    <button className="link" onClick={() => (setSelected(new Set()), setConfirmDel(false))}>Clear selection</button>
+                  </>
+                )}
+              </>
+            )}
+            {delMsg && delMsg.kind !== 'busy' && <span className={`status ${delMsg.kind}`}>{delMsg.text} <button className="link" onClick={() => setDelMsg(null)}>×</button></span>}
+          </div>
+        )}
 
         <div className="table-wrap">
           <table className="journal">
             <thead>
               <tr>
+                <th className="jr-sel">
+                  <input
+                    type="checkbox"
+                    checked={allPageSel}
+                    disabled={!pageClosed.length}
+                    onChange={() =>
+                      setSelected((s) => {
+                        const n = new Set(s);
+                        pageClosed.forEach((t) => (allPageSel ? n.delete(t.id) : n.add(t.id)));
+                        return n;
+                      })
+                    }
+                    aria-label="Select all closed trades on this page"
+                    title="Select all closed trades on this page"
+                  />
+                </th>
                 <Th k="openedAt">Date</Th>
                 <Th k="symbol">Stock</Th>
                 <th className="plain-th">Side</th>
@@ -278,7 +348,17 @@ export default function Journal({ subview = 'all' }) {
             <tbody>
               {shown.map((t) => (
                 <Fragment key={t.id}>
-                  <tr className={`clickable ${openId === t.id ? 'open' : ''}`} onClick={() => setOpenId(openId === t.id ? null : t.id)}>
+                  <tr className={`clickable ${openId === t.id ? 'open' : ''} ${selected.has(t.id) ? 'jr-picked' : ''}`} onClick={() => setOpenId(openId === t.id ? null : t.id)}>
+                    <td className="jr-sel" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(t.id)}
+                        disabled={t.status !== 'CLOSED'}
+                        onChange={() => (toggleSel(t.id), setConfirmDel(false))}
+                        aria-label={`Select ${describe(t)} trade`}
+                        title={t.status !== 'CLOSED' ? 'Open trades can’t be deleted — exit first' : 'Select to delete'}
+                      />
+                    </td>
                     <td>
                       <div className="jr-day">{dayShort.format(new Date(t.openedAt))}</div>
                       {t.date.slice(0, 4) !== today.slice(0, 4) && <div className="tk-sub"><span>{t.date.slice(0, 4)}</span></div>}
@@ -337,6 +417,7 @@ export default function Journal({ subview = 'all' }) {
                           onEdit={() => setEditId(t.id)}
                           onDone={() => setEditId(null)}
                           onSave={(text) => saveNote(t.id, text)}
+                          onDelete={() => deleteTrips([t.id])}
                         />
                       </td>
                     </tr>
@@ -382,9 +463,25 @@ export default function Journal({ subview = 'all' }) {
   );
 }
 
-function TradeDetail({ t, editing, onEdit, onDone, onSave }) {
+function TradeDetail({ t, editing, onEdit, onDone, onSave, onDelete }) {
+  const [ask, setAsk] = useState(false);
+  const [err, setErr] = useState('');
   return (
     <div className="jr-detail">
+      <div className="jr-del">
+        {t.status !== 'CLOSED' ? (
+          <span className="muted-cell">Open trades can’t be deleted — exit the position first.</span>
+        ) : ask ? (
+          <>
+            <span className="dp-ask">Delete this trade? Its P&amp;L ({signed.format(t.net)}) leaves your reports{t.note ? ' and its note is deleted' : ''}. This can’t be undone.</span>
+            <button className="btn danger" onClick={async () => { setErr(''); if (!(await onDelete())) setAsk(false); }}>Yes, delete</button>
+            <button className="link" onClick={() => setAsk(false)}>Cancel</button>
+          </>
+        ) : (
+          <button className="btn danger-outline" onClick={() => setAsk(true)}>Delete trade</button>
+        )}
+        {err && <span className="status err">{err}</span>}
+      </div>
       <div className="jr-facts">
         <Fact label="Entry" value={`${timeFmt.format(new Date(t.openedAt))} · avg ₹${price.format(t.avgEntry)}`} sub={dayFmt.format(new Date(t.openedAt))} />
         <Fact
