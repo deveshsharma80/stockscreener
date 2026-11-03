@@ -898,3 +898,10 @@ table.mv-table th.num button { margin-left: auto; text-align: right; }
 .orphan-notes .card-head { flex-wrap: wrap; gap: 6px 12px; }
 .orphan-notes ul { list-style: none; margin: 0; padding: 4px 16px 16px; display: grid; gap: 14px; }
 .orphan-meta { font-size: 12px; margin-bottom: 4px; }
+
+/* Exit position from a watchlist row */
+.icon-btn.tk-exit-btn { color: var(--danger); }
+.icon-btn.tk-exit-btn:hover { background: var(--danger-bg); }
+.icon-btn.tk-exit-btn.err { outline: 2px solid var(--danger); }
+.btn.tk-exit-confirm { padding: 3px 10px; font-size: 12.5px; font-weight: 700; background: var(--danger); color: var(--danger-ink); border-color: transparent; }
+.tk-exit-slot { display: inline-block; width: 28px; }

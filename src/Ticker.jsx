@@ -325,8 +325,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
     });
   }, [rows, quotes, tab, sort, posByKey]);
 
-  const showOI = view.some((r) => kindOf(r.segment) === 'fno');
-  const colCount = 9 + (showOI ? 1 : 0);
+  const colCount = 7;
 
   if (checking) return <p className="tk-note">Opening ticker…</p>;
   if (!unlocked) {
@@ -459,9 +458,6 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
                 <Th k="name">Instrument</Th>
                 <Th k="ltp" className="num">LTP</Th>
                 <Th k="change" className="num">Chg</Th>
-                <Th k="changePct" className="num">Chg %</Th>
-                <Th k="volume" className="num">Volume</Th>
-                {showOI && <Th k="oi" className="num">OI</Th>}
                 <Th k="posQty" className="num">Position</Th>
                 <Th k="openPnl" className="num">Open P&amp;L</Th>
                 <th className="tk-trade-h">Trade</th>
@@ -473,8 +469,8 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
                 <TickerRow
                   key={r.key}
                   row={r}
-                  showOI={showOI}
                   colCount={colCount}
+                  onExitPos={() => placeTrade(r.key, r.pos.qty > 0 ? 'SELL' : 'BUY', Math.abs(r.pos.qty))}
                   busy={busyKey === r.key}
                   ticket={ticket?.key === r.key ? ticket.side : null}
                   onTicket={(side) => openTicket(r.key, side)}
@@ -544,9 +540,58 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
   );
 }
 
+// ------------------------------------------------------------------ exit an open position from its row
+
+/** Exit icon: first click asks "Exit?", second click closes the whole position at market. */
+function ExitPosButton({ pos, label, onExit }) {
+  const [stage, setStage] = useState('idle'); // idle | confirm | busy | done | err
+  const [msg, setMsg] = useState('');
+  useEffect(() => {
+    if (stage !== 'confirm' && stage !== 'done' && stage !== 'err') return;
+    const t = setTimeout(() => setStage('idle'), stage === 'confirm' ? 4000 : 5000);
+    return () => clearTimeout(t);
+  }, [stage]);
+  const what = `${pos.qty > 0 ? 'Sell' : 'Buy back'} ${Math.abs(pos.qty).toLocaleString('en-IN')} at market`;
+
+  if (stage === 'confirm' || stage === 'busy') {
+    return (
+      <button
+        className="btn tk-exit-confirm"
+        disabled={stage === 'busy'}
+        onClick={async () => {
+          setStage('busy');
+          try {
+            const t = await onExit();
+            setMsg(`Exited ${label}: ${t.side === 'BUY' ? 'bought' : 'sold'} ${t.qty} @ ${price.format(t.price)}`);
+            setStage('done');
+          } catch (e) {
+            setMsg(e.message);
+            setStage('err');
+          }
+        }}
+        title={what}
+      >
+        {stage === 'busy' ? 'Exiting…' : 'Exit?'}
+      </button>
+    );
+  }
+  return (
+    <button
+      className={`icon-btn tk-exit-btn ${stage === 'err' ? 'err' : ''}`}
+      onClick={() => setStage('confirm')}
+      aria-label={`Exit position in ${label}`}
+      title={stage === 'err' || stage === 'done' ? msg : `Exit position — ${what}`}
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10" />
+      </svg>
+    </button>
+  );
+}
+
 // ------------------------------------------------------------------ row with tick flash + trade ticket
 
-function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicket, onPlace, onRemove, brokeragePct, account, products, chartOpen, onChart }) {
+function TickerRow({ row, colCount, onExitPos, busy, ticket, onTicket, onCloseTicket, onPlace, onRemove, brokeragePct, account, products, chartOpen, onChart }) {
   const q = row.q;
   const prev = useRef(null);
   const [flash, setFlash] = useState({ dir: '', n: 0 });
@@ -579,18 +624,9 @@ function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicke
         <td className="num mono tk-ltp">
           <span key={flash.n} className={`tk-flash ${flash.dir}`}>{q ? P(q.ltp) : <span className="muted-dash">…</span>}</span>
         </td>
-        <td className={`num mono ${tone}`}>{q?.change != null ? signed.format(q.change) : <span className="muted-dash">—</span>}</td>
-        <td className="num">
-          {q?.changePct != null ? <span className={`tk-pct ${tone}`}>{signed.format(q.changePct)}%</span> : <span className="muted-dash">—</span>}
+        <td className={`num mono ${tone}`} title={q?.changePct != null ? `${signed.format(q.changePct)}% today` : undefined}>
+          {q?.change != null ? signed.format(q.change) : <span className="muted-dash">—</span>}
         </td>
-        <td className="num mono" title={q?.volume ? q.volume.toLocaleString('en-IN') : undefined}>
-          {q?.volume ? compact.format(q.volume) : <span className="muted-dash">—</span>}
-        </td>
-        {showOI && (
-          <td className="num mono" title={q?.oi ? q.oi.toLocaleString('en-IN') : undefined}>
-            {kind === 'fno' && q?.oi ? compact.format(q.oi) : <span className="muted-dash">—</span>}
-          </td>
-        )}
         <td className="num mono">
           {pos?.qty ? (
             <span className="tk-posq">
@@ -616,6 +652,7 @@ function TickerRow({ row, showOI, colCount, busy, ticket, onTicket, onCloseTicke
         </td>
         <td className="tk-x">
           <span className="tk-row-actions">
+            {pos?.qty ? <ExitPosButton pos={pos} label={describe(row)} onExit={onExitPos} /> : <span className="tk-exit-slot" aria-hidden="true" />}
             <button
               className={`icon-btn tk-chart-btn ${chartOpen ? 'on' : ''}`}
               onClick={onChart}
