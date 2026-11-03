@@ -19,7 +19,8 @@
 //               | "STK_OPT_BUY" (Equity Options Buying). Each type trades from its own third of the money.
 //      qty in shares (F&O: multiple of lot size)
 // POST {action:"paper-capital", amount}               set the starting amount (keeps trades)
-// POST {action:"paper-reset", amount?}                delete all paper trades, optionally set a new starting amount
+// POST {action:"paper-reset", amount?}                start a new money period (keeps every trade and note);
+//                                                    needs no open positions
 //
 // Trigger orders (always Equity Intraday; fill at the live price once it reaches the trigger):
 // GET  ?action=resolve&symbol=SBIN                    instrument, live price and funds for the order popup
@@ -35,9 +36,9 @@
 // POST {action:"journal-note", id, note}              save a note ("" deletes it)
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
-import { PRODUCTS, addTrade, checkFunds, computeBook, productFor, readAccount, readTrades, resetTrades, setCapital, validateOrder } from '../lib/paper.js';
+import { PRODUCTS, addTrade, checkFunds, computeBook, productFor, readAccount, readTrades, resetAccount, setCapital, validateOrder } from '../lib/paper.js';
 import { readNotes, roundTrips, saveNote } from '../lib/journal.js';
-import { cancelAllPending, cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
+import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import {
   DhanError,
   SEGMENTS,
@@ -112,7 +113,8 @@ export default async function handler(req, res) {
       }
       case 'POST journal-note': {
         const id = String(body.id || '');
-        if (!roundTrips(await readTrades()).some((t) => t.id === id)) throw new HttpError(404, 'That trade no longer exists');
+        const removing = !String(body.note ?? '').trim(); // notes of deleted trades can still be removed
+        if (!removing && !roundTrips(await readTrades()).some((t) => t.id === id)) throw new HttpError(404, 'That trade no longer exists');
         const note = await saveNote(id, body.note);
         return res.json({ ok: true, id, note });
       }
@@ -161,11 +163,18 @@ export default async function handler(req, res) {
       case 'POST paper-capital':
         await setCapital(body.amount);
         return res.json({ ok: true, ...(await paperBook()) });
-      case 'POST paper-reset':
-        if (body.amount !== undefined && body.amount !== null && body.amount !== '') await setCapital(body.amount);
-        await resetTrades();
-        await cancelAllPending();
+      case 'POST paper-reset': {
+        // Nothing is deleted: a reset starts a new money period. Close positions first
+        // so none is left straddling the old and new period.
+        const book = await paperBook();
+        const open = book.positions.filter((p) => p.qty !== 0);
+        if (open.length) {
+          throw new HttpError(400, `Exit your open positions first (${open.map((p) => p.symbol).slice(0, 5).join(', ')}${open.length > 5 ? '…' : ''}). Reset keeps all trade history; it only starts your money again.`, { kind: 'open-positions' });
+        }
+        const hasAmount = body.amount !== undefined && body.amount !== null && body.amount !== '';
+        await resetAccount(hasAmount ? body.amount : undefined, book.account);
         return res.json({ ok: true, ...(await paperBook()) });
+      }
       default:
         throw new HttpError(400, `Unknown action "${action}"`);
     }

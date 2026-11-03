@@ -54,6 +54,8 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 - **Orders** — trigger orders waiting for their price (with Cancel), and what filled, failed or expired.
 - **Dhan connection** — paste / renew the Dhan access token.
 - **Trades** — your trading journal: each trade from entry to exit (adding and partial exits included) with entry/exit time and average price, time held, net P&L after brokerage, P&L % (hover for the return on margin), and your notes. Filter by period, trade type and result; 20/50/100 per page; search finds notes too; CSV export includes notes. Notes are stored in `trade_journal` (`GET /api/ticker?action=journal`, `POST {action:"journal-note", id, note}`).
+- **Trade types** — three, each with its own money: **Equity Intraday** (NSE/BSE stocks, buy or short, 4× leverage, 0.025% brokerage per side), **Index Options Buying** (NIFTY, BANKNIFTY, SENSEX … options; buy to open, sell only what you hold, full premium, 1% per side) and **Equity Options Buying** (stock options, same rules). The type is chosen automatically from the instrument. When you set or reset the starting amount it is split into **three equal parts**, and a trade can only use its own type's part (available = allocated + that type's net booked P&L − its margin used). Older "Options Buying" trades are counted as index or equity options by their instrument.
+- **Reset** (Paper Trading › Overview) starts your money again from now — a new starting amount, split into thirds — **without deleting anything**: every trade, report and journal note stays in history; balances and open positions count only trades made since the reset. Exit open positions before resetting. ("Change starting amount" adjusts the current period's amount instead.)
 - **Overview / Reports / Fills** — paper account, P&L by trade type, daily and weekly reports, trade history.
 
 ## Ticker and Dhan
@@ -71,7 +73,7 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 - Paper funds are checked when you place the order and again when it fills; if they've run out it's marked **Not placed**.
 - Checked only during market hours: on every price refresh of the Market pages, and every ~10 s from any other page of the app (the secret must be remembered on that device).
 - With every tab closed, nothing checks prices unless you add a scheduler. Free option: [cron-job.org](https://cron-job.org) → new cron job → URL `https://YOUR-APP.vercel.app/api/ticker?action=check-orders&secret=YOUR_SECRET`, every 1 minute, Mon–Fri. Each call checks waiting orders once.
-- Stored in `paper_orders`. Resetting the paper account cancels waiting orders.
+- Stored in `paper_orders`. Waiting orders stay in place when you reset the paper account.
 - Testing outside market hours: set `PAPER_ORDERS_IGNORE_HOURS=1` (with `DHAN_MOCK=1` locally) so orders trigger any time.
 
 ## Crypto (Binance)

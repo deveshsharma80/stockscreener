@@ -376,6 +376,8 @@ export default function Journal({ subview = 'all' }) {
           A trade runs from entry until the position is back to zero (adding and partial exits included). P&amp;L % = net P&amp;L after brokerage ÷ entry value; hover it for the return on margin.
         </div>
       </section>
+
+      <OrphanNotes notes={notes} trips={data?.trips || []} onRemove={(id) => saveNote(id, '')} />
     </>
   );
 }
@@ -525,5 +527,51 @@ function NoteEditor({ note, editing, onEdit, onDone, onSave }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Notes whose trade no longer exists (e.g. deleted by an older version's Reset): text kept so it isn't lost. */
+function OrphanNotes({ notes, trips, onRemove }) {
+  const [busy, setBusy] = useState('');
+  const ids = new Set(trips.map((t) => t.id));
+  const list = Object.values(notes)
+    .filter((n) => !ids.has(n.id))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  if (!list.length) return null;
+  return (
+    <section className="card orphan-notes">
+      <div className="card-head">
+        <h2>Notes from deleted trades ({list.length})</h2>
+        <span className="muted small">The trades were removed by an earlier Reset; your notes were kept. Copy anything you need, then remove them.</span>
+      </div>
+      <ul>
+        {list.map((n) => (
+          <li key={n.id}>
+            <div className="orphan-meta muted-cell">
+              Written {stamp.format(new Date(n.createdAt))}
+              {n.updatedAt !== n.createdAt && <> · edited {stamp.format(new Date(n.updatedAt))}</>}
+            </div>
+            <p className="jr-note-body">{n.note}</p>
+            <div className="jr-note-actions">
+              <button className="btn" onClick={() => navigator.clipboard?.writeText(n.note)}>Copy</button>
+              <button
+                className="btn danger-outline"
+                disabled={busy === n.id}
+                onClick={async () => {
+                  setBusy(n.id);
+                  try {
+                    await onRemove(n.id);
+                  } finally {
+                    setBusy('');
+                  }
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

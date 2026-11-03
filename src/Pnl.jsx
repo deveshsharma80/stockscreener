@@ -135,7 +135,7 @@ export default function Pnl({ subview = 'overview' }) {
       setQuotes({});
       setResetStep(0);
       setMode('');
-      setAcctMsg({ kind: 'ok', text: `Account reset to ₹${price.format(amountNum)}` });
+      setAcctMsg({ kind: 'ok', text: `Started again with ₹${price.format(amountNum)} (a third for each trade type). All earlier trades and notes are kept.` });
     } catch (err) {
       setAcctMsg({ kind: 'err', text: err.message });
     }
@@ -171,7 +171,11 @@ export default function Pnl({ subview = 'overview' }) {
           </span>
         </div>
         <dl className="pnl-acct">
-          <div><dt>Starting amount</dt><dd className="mono">₹{price.format(acct.startingCapital)}{acct.isDefault && <span className="opt"> default</span>}</dd></div>
+          <div>
+            <dt>Starting amount</dt>
+            <dd className="mono">₹{price.format(acct.startingCapital)}{acct.isDefault && <span className="opt"> default</span>}</dd>
+            {acct.periodStart && <div className="muted small">since reset on {new Date(acct.periodStart).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}</div>}
+          </div>
           <div>
             <dt>Account value</dt>
             <dd className="mono big">₹{price.format(accountValue)}</dd>
@@ -233,13 +237,13 @@ export default function Pnl({ subview = 'overview' }) {
             ) : (
               <>
                 <span className="dp-ask">
-                  Delete {book.trades.length.toLocaleString('en-IN')} trades and start with ₹{price.format(amountNum)}?
+                  Start your money again from now with ₹{price.format(amountNum)}? Your {book.trades.length.toLocaleString('en-IN')} trades and notes stay in history.
                 </span>
-                <button className="btn danger" onClick={reset}>Yes, reset</button>
+                <button className="btn danger" onClick={reset}>Yes, start again</button>
               </>
             )}
             <button type="button" className="link" onClick={() => setMode('')}>Cancel</button>
-            <span className="muted small">Clears every paper trade, position and report, and splits the amount into three equal parts (one per trade type). Your watchlist and real Dhan account are not touched.</span>
+            <span className="muted small">Starts your money again from now, split into three equal parts (one per trade type). Nothing is deleted: all trades, reports and journal notes stay. Exit open positions first.</span>
           </div>
         )}
         {acctMsg && <p className={`status ${acctMsg.kind}`}>{acctMsg.text}</p>}

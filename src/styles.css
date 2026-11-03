@@ -892,3 +892,9 @@ table.mv-table th.num button { margin-left: auto; text-align: right; }
 .pnl-pots table th { padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .pnl-pots table td { padding: 8px 12px; }
 .tk-funds .tk-prod { margin-right: 4px; }
+
+/* Notes whose trades were deleted */
+.orphan-notes { margin-top: 16px; }
+.orphan-notes .card-head { flex-wrap: wrap; gap: 6px 12px; }
+.orphan-notes ul { list-style: none; margin: 0; padding: 4px 16px 16px; display: grid; gap: 14px; }
+.orphan-meta { font-size: 12px; margin-bottom: 4px; }
