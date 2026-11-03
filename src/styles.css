@@ -907,8 +907,9 @@ table.mv-table th.num button { margin-left: auto; text-align: right; }
 .tk-exit-slot { display: inline-block; width: 28px; }
 
 /* Floating trade box on the chart */
-.btn.tk-trade-btn { font-weight: 700; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
-.btn.tk-trade-btn.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.btn.tk-trade-btn { font-weight: 700; background: #2563eb; color: #fff; border-color: transparent; }
+.btn.tk-trade-btn:hover { background: #1d4ed8; }
+.btn.tk-trade-btn.on { background: #1e40af; box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.35); }
 .qt {
   position: fixed; z-index: 55; width: 290px; max-width: calc(100vw - 16px); background: var(--surface); color: var(--text);
   border: 1px solid var(--border); border-top: 3px solid var(--buy); border-radius: 12px; box-shadow: 0 12px 36px rgb(0 0 0 / 0.28);
@@ -957,3 +958,33 @@ tr.jr-picked > td { background: color-mix(in srgb, var(--accent) 8%, transparent
 .btn.pot-reset-btn { padding: 3px 10px; font-size: 12.5px; }
 tr.pot-reset-row > td { background: var(--surface-2); padding: 4px 12px 10px !important; white-space: normal; }
 .pot-since { font-size: 11.5px; margin-top: 3px; }
+
+/* Trade box: bigger, with the deploy slider */
+.qt { width: 360px; font-size: 14.5px; }
+.qt-head { padding: 9px 10px 9px 12px; }
+.qt-head b { font-size: 15px; }
+.qt-ltp { font-size: 15px; }
+.qt-body { padding: 14px; gap: 11px; }
+.qt-switch { width: 150px; height: 36px; font-size: 14.5px; }
+.qt-qty { font-size: 14px; }
+.qt-qty input { width: 90px; font-size: 15.5px; padding: 6px 8px; }
+.qt-info { font-size: 13px; }
+.qt-facts dt { font-size: 13px; }
+.qt-facts dd { font-size: 14px; }
+.qt .status { font-size: 13.5px; }
+.btn.qt-go { padding: 10px; font-size: 15.5px; }
+.qt-deploy { display: grid; gap: 6px; padding: 10px 10px 8px; border-radius: 10px; background: var(--surface-2); }
+.qt-deploy-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13.5px; flex-wrap: wrap; }
+.qt-deploy-top .mono { font-size: 12.5px; }
+.qt-deploy input[type=range] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 8px; border-radius: 999px; outline: none; cursor: pointer;
+  background: linear-gradient(90deg, #2563eb var(--fill, 0%), var(--border) var(--fill, 0%));
+}
+.qt-deploy input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 3px solid #2563eb; box-shadow: 0 1px 4px rgb(0 0 0 / 0.3); }
+.qt-deploy input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 3px solid #2563eb; }
+.qt-deploy input[type=range]:disabled { opacity: 0.5; cursor: not-allowed; }
+.qt-marks { display: flex; flex-wrap: wrap; gap: 5px; }
+.qt-marks button { font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
+.qt-marks button.on, .qt-marks button:hover:not(:disabled) { color: #fff; background: #2563eb; border-color: #2563eb; }
+.qt-marks .qt-exitall { margin-left: auto; color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.qt-marks .qt-exitall:hover { background: var(--danger) !important; border-color: var(--danger) !important; }

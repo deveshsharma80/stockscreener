@@ -5,7 +5,7 @@ import { PRODUCT_LABEL, describe, kindOf, price, productFor } from './Ticker.jsx
 // keep the candles in view; its position is remembered on this device.
 
 const POS_KEY = 'stockhits.quickTradePos';
-const W = 290;
+const W = 360;
 const readPos = () => {
   try {
     const p = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
@@ -26,6 +26,7 @@ export default function QuickTrade({ row, quote, position, account, products, on
   const [side, setSide] = useState('BUY');
   const [units, setUnits] = useState('1');
   const [status, setStatus] = useState(null); // { kind, text }
+  const [deploy, setDeploy] = useState(null); // % of available money chosen with the slider (null = typed qty)
 
   const product = productFor(row);
   const fno = kindOf(row.segment) === 'fno';
@@ -48,6 +49,19 @@ export default function QuickTrade({ row, quote, position, account, products, on
   const avail = pot ? pot.available : account?.available;
   const released = closing && ltp != null && position ? closing * Math.abs(position.avg) / lev + closing * (ltp - position.avg) * Math.sign(held) : 0;
   const short = account && need != null && opening > 0 && need > (avail ?? 0) + released;
+
+  // Money per share / lot when opening: margin (value ÷ leverage) + brokerage
+  const mult = fno ? lot : 1;
+  const unitCost = ltp != null ? (ltp * mult) / lev + (ltp * mult * pct) / 100 : null;
+  const unitsFor = (p) => (unitCost && avail > 0 ? Math.floor(((avail * p) / 100) / unitCost) : 0);
+  const usedPct = need != null && avail > 0 ? Math.min(100, (need / avail) * 100) : 0;
+  const sliderPct = deploy ?? Math.round(usedPct);
+  const pickPct = (p) => {
+    setDeploy(p);
+    setUnits(String(unitsFor(p)));
+    setStatus(null);
+  };
+  const exitQty = held && (side === 'BUY' ? held < 0 : held > 0) ? Math.abs(held) : 0;
   const rule = !product
     ? 'This instrument can’t be paper traded (only stocks and options).'
     : optBuy && side === 'SELL' && held <= 0
@@ -135,8 +149,36 @@ export default function QuickTrade({ row, quote, position, account, products, on
           </button>
           <label className="qt-qty">
             {fno ? 'Lots' : 'Qty'}
-            <input type="number" min="1" step="1" value={units} onChange={(e) => (setUnits(e.target.value), setStatus(null))} aria-label={fno ? 'Lots' : 'Quantity'} />
+            <input type="number" min="1" step="1" value={units} onChange={(e) => (setUnits(e.target.value), setDeploy(null), setStatus(null))} aria-label={fno ? 'Lots' : 'Quantity'} />
           </label>
+        </div>
+
+        <div className="qt-deploy">
+          <div className="qt-deploy-top">
+            <span>Use <b>{sliderPct}%</b> of {PRODUCT_LABEL[product] || ''} money</span>
+            <span className="mono muted-cell">{avail != null ? `₹${price.format((avail * sliderPct) / 100)} of ₹${price.format(avail)}` : '…'}</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={sliderPct}
+            onChange={(e) => pickPct(Number(e.target.value))}
+            disabled={!unitCost || !(avail > 0)}
+            style={{ '--fill': `${sliderPct}%` }}
+            aria-label="Percentage of available money to use"
+          />
+          <div className="qt-marks">
+            {[10, 25, 50, 75, 100].map((p) => (
+              <button type="button" key={p} className={deploy === p ? 'on' : ''} onClick={() => pickPct(p)} disabled={!unitCost || !(avail > 0)}>{p}%</button>
+            ))}
+            {exitQty > 0 && (
+              <button type="button" className="qt-exitall" onClick={() => (setUnits(String(fno ? Math.ceil(exitQty / lot) : exitQty)), setDeploy(null), setStatus(null))} title="Quantity that closes your whole position">
+                Close all {exitQty.toLocaleString('en-IN')}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="qt-info">
@@ -153,6 +195,12 @@ export default function QuickTrade({ row, quote, position, account, products, on
           </dl>
         )}
 
+        {deploy != null && deploy > 0 && n === 0 && unitCost != null && (
+          <p className="status err">
+            {deploy}% (₹{price.format(((avail || 0) * deploy) / 100)}) isn’t enough for 1 {fno ? 'lot' : 'share'} — that needs ₹{price.format(unitCost)}
+            {unitsFor(100) > 0 ? `; try ${Math.ceil(((unitCost / avail) * 100))}% or more.` : '.'}
+          </p>
+        )}
         {rule && <p className="status err">{rule}</p>}
         {!rule && short && <p className="status err">Not enough {PRODUCT_LABEL[product]} money: needs ₹{price.format(need)}.</p>}
         {status && status.kind !== 'busy' && <p className={`status ${status.kind}`}>{status.text}</p>}
