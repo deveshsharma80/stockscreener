@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CandlestickSeries, HistogramSeries, LineSeries, LineStyle, createChart, createSeriesMarkers } from 'lightweight-charts';
 import { IST_OFFSET, aggregate, applyTick, crossovers, ema } from './candles.js';
-import { api, describe, kindOf, price, segLabel, signed, store } from './Ticker.jsx';
+import { api, describe, kindOf, price, productFor, segLabel, signed, store } from './Ticker.jsx';
+import QuickTrade from './QuickTrade.jsx';
 
 // 3- and 5-minute candlestick chart for one instrument. History comes from
 // Dhan's 1-minute intraday candles (refreshed every minute); the current
@@ -43,7 +44,8 @@ const EXIT_NAME = { SL: 'Stop loss', TP: 'Take profit' };
 const tick = (v) => Math.round(v * 20) / 20; // ₹0.05 steps
 const GRAB_PX = 8; // how close the pointer must be to a line to grab it
 
-export default function Chart({ secret, row, quote, marketOpen, onClose, position, onExit, exits = null, onSetExit }) {
+export default function Chart({ secret, row, quote, marketOpen, onClose, position, onExit, exits = null, onSetExit, onTrade, account, products }) {
+  const [tradeOpen, setTradeOpen] = useState(false);
   const [minutes, setMinutes] = useState(() => (Number(store.get(INTERVAL_KEY)) === 5 ? 5 : 3));
   const [oneMin, setOneMin] = useState(null);
   const [error, setError] = useState('');
@@ -474,6 +476,11 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
               <button key={m} className={minutes === m ? 'on' : ''} onClick={() => pick(m)}>{m} min</button>
             ))}
           </div>
+          {onTrade && productFor(row) && (
+            <button className={`btn tk-trade-btn ${tradeOpen ? 'on' : ''}`} onClick={() => setTradeOpen((o) => !o)} aria-pressed={tradeOpen}>
+              Trade
+            </button>
+          )}
           <button className="btn btn-close" onClick={onClose}>Close chart</button>
         </div>
       </div>
@@ -563,6 +570,17 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
       <div className="tk-chart-box" ref={box} />
       {error && <p className="status err tk-chart-err">{error}</p>}
       {oneMin && !oneMin.length && !error && <p className="tk-note tk-chart-err">No intraday candles from Dhan for the last {DAYS} days.</p>}
+      {tradeOpen && (
+        <QuickTrade
+          row={row}
+          quote={quote}
+          position={position}
+          account={account}
+          products={products}
+          onPlace={onTrade}
+          onClose={() => setTradeOpen(false)}
+        />
+      )}
       <div className="foot">
         {minutes}-minute candles built from Dhan 1-minute data, last {DAYS} days · Indian time ·{' '}
         {marketOpen ? 'current candle updates live with the Ticker' : 'market closed — showing completed candles'}

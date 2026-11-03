@@ -514,6 +514,9 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
             onExit={(p) => placeTrade(p.key, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty))}
             exits={exitsByKey.get(chartKey) || null}
             onSetExit={(kind, level) => setExit(chartKey, kind, level)}
+            onTrade={(side, qty, product) => placeTrade(chartKey, side, qty, product)}
+            account={book?.account}
+            products={book?.products}
           />
         </Suspense>
       )}
