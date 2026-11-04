@@ -141,7 +141,7 @@ export default function Journal({ subview = 'all' }) {
     const closed = rows.filter((t) => t.status === 'CLOSED');
     const wins = closed.filter((t) => t.net > 0);
     const net = rows.reduce((s, t) => s + t.net, 0);
-    const pcts = closed.map((t) => t.pnlPct).filter((v) => v != null);
+    const pcts = closed.map((t) => t.marginPct).filter((v) => v != null);
     return {
       count: rows.length,
       open: rows.length - closed.length,
@@ -193,10 +193,10 @@ export default function Journal({ subview = 'all' }) {
     });
 
   const exportCsv = () => {
-    const head = ['Date', 'Instrument', 'Type', 'Side', 'Qty', 'EntryTime', 'AvgEntry', 'ExitTime', 'AvgExit', 'Status', 'Held', 'GrossPnL', 'Brokerage', 'NetPnL', 'PnLPct', 'MarginPct', 'Source', 'Note'];
+    const head = ['Date', 'Instrument', 'Type', 'Side', 'Qty', 'EntryTime', 'AvgEntry', 'ExitTime', 'AvgExit', 'Status', 'Held', 'GrossPnL', 'Brokerage', 'NetPnL', 'PnLPctOnMoneyDeployed', 'PnLPctOnPositionValue', 'Source', 'Note'];
     const esc = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
     const lines = sorted.map((t) =>
-      [t.date, describe(t), PRODUCT_LABEL[t.product] || t.product, t.side, t.qty, t.openedAt, t.avgEntry, t.closedAt || '', t.avgExit ?? '', t.status, held(t.holdMs) || '', t.gross, t.charges, t.net, t.pnlPct ?? '', t.marginPct ?? '', t.viaOrder ? 'Trigger order' : 'Manual', t.note?.note || '']
+      [t.date, describe(t), PRODUCT_LABEL[t.product] || t.product, t.side, t.qty, t.openedAt, t.avgEntry, t.closedAt || '', t.avgExit ?? '', t.status, held(t.holdMs) || '', t.gross, t.charges, t.net, t.marginPct ?? '', t.pnlPct ?? '', t.viaOrder ? 'Trigger order' : 'Manual', t.note?.note || '']
         .map(esc)
         .join(',')
     );
@@ -340,7 +340,7 @@ export default function Journal({ subview = 'all' }) {
                 <th className="plain-th">Exit</th>
                 <Th k="holdMs">Held</Th>
                 <Th k="total" className="num">Net P&amp;L</Th>
-                <Th k="pnlPct" className="num">P&amp;L %</Th>
+                <Th k="marginPct" className="num">P&amp;L %</Th>
                 <th className="plain-th jr-note-h">Notes</th>
                 <th aria-label="Details" />
               </tr>
@@ -394,8 +394,8 @@ export default function Journal({ subview = 'all' }) {
                       {t.total != null ? <b>{signed.format(t.total)}</b> : '…'}
                       {t.status === 'OPEN' && <small className="muted-cell"> incl. open</small>}
                     </td>
-                    <td className={`num mono ${tone(t.pnlPct)}`} title={t.marginPct != null && t.leverage > 1 ? `${pctText(t.marginPct)} on margin (${t.leverage}×)` : undefined}>
-                      {pctText(t.pnlPct)}
+                    <td className={`num mono ${tone(t.marginPct)}`} title={t.marginPct != null ? `On the money you deployed${t.leverage > 1 ? ` (margin, ${t.leverage}× leverage) · ${pctText(t.pnlPct)} on full position value` : ''}` : undefined}>
+                      {pctText(t.marginPct)}
                     </td>
                     <td className="jr-note-cell" onClick={(e) => e.stopPropagation()}>
                       {t.note ? (
@@ -491,7 +491,7 @@ function TradeDetail({ t, editing, onEdit, onDone, onSave, onDelete }) {
         />
         <Fact label="Trade value" value={`₹${price.format(t.entryValue)}`} sub={t.leverage > 1 ? `margin ≈ ₹${price.format(t.entryValue / t.leverage)} (${t.leverage}×)` : PRODUCT_LABEL[t.product]} />
         <Fact label="Gross / brokerage" value={`${signed.format(t.gross)} / −${price.format(t.charges)}`} sub={`Net ${signed.format(t.net)}`} tone={tone(t.net)} />
-        <Fact label="Price move" value={pctText(t.movePct)} sub={t.marginPct != null && t.leverage > 1 ? `${pctText(t.marginPct)} on margin` : ''} tone={tone(t.movePct)} />
+        <Fact label="Price move" value={pctText(t.movePct)} sub={t.marginPct != null ? `${pctText(t.marginPct)} on money deployed` : ''} tone={tone(t.movePct)} />
       </div>
 
       <div className="jr-cols">
