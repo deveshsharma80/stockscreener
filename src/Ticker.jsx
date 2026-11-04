@@ -310,11 +310,11 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
         const q = quotes[r.key] || null;
         const p = posByKey.get(r.key);
         const openPnl = p && p.qty && q?.ltp != null ? (q.ltp - p.avg) * p.qty : null;
-        return { ...r, order: i, q, pos: p || null, openPnl };
+        return { ...r, order: i, q, pos: p || null, openPnl, pnlPct: pnlPctOf(openPnl, p) };
       })
       .filter((r) => tab === 'all' || kindOf(r.segment) === tab);
     if (sort.key === 'order') return list;
-    const val = (r) => (sort.key === 'name' ? describe(r) : sort.key === 'openPnl' ? r.openPnl : sort.key === 'posQty' ? r.pos?.qty || null : r.q?.[sort.key] ?? null);
+    const val = (r) => (sort.key === 'name' ? describe(r) : sort.key === 'openPnl' ? r.openPnl : sort.key === 'pnlPct' ? r.pnlPct : sort.key === 'posQty' ? r.pos?.qty || null : r.q?.[sort.key] ?? null);
     return list.sort((a, b) => {
       const x = val(a);
       const y = val(b);
@@ -461,6 +461,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
                 <Th k="change" className="num">Chg</Th>
                 <Th k="posQty" className="num">Position</Th>
                 <Th k="openPnl" className="num">Open P&amp;L</Th>
+                <Th k="pnlPct" className="num">P&amp;L %</Th>
                 <th className="tk-trade-h">Trade</th>
                 <th aria-label="Remove" />
               </tr>
@@ -650,6 +651,9 @@ function TickerRow({ row, onExitPos, busy, tradeOpen, onTrade, onRemove, chartOp
         <td className={`num mono ${row.openPnl > 0 ? 'pos' : row.openPnl < 0 ? 'neg' : ''}`}>
           {row.openPnl != null ? signed.format(row.openPnl) : <span className="muted-dash">—</span>}
         </td>
+        <td className="num">
+          <PnlPct pct={row.pnlPct} pos={pos} />
+        </td>
         <td className="tk-trade">
           {tradable ? (
             <button className={`btn tk-row-trade ${tradeOpen ? 'on' : ''}`} onClick={onTrade} aria-pressed={tradeOpen} title={`Buy or sell ${describe(row)}`}>
@@ -686,6 +690,27 @@ function TickerRow({ row, onExitPos, busy, tradeOpen, onTrade, onRemove, chartOp
   );
 }
 
+// ------------------------------------------------------------------ P&L %
+
+// Open P&L as a % of the money actually blocked for the trade (its margin):
+// for Equity Intraday that is position value ÷ 4, not the full 4× value.
+export function pnlPctOf(open, pos) {
+  if (open == null || !pos?.qty) return null;
+  const margin = pos.margin || (Math.abs(pos.qty) * pos.avg) / (pos.product === 'EQ_INTRADAY' ? 4 : 1);
+  return margin > 0 ? (open / margin) * 100 : null;
+}
+
+function PnlPct({ pct, pos }) {
+  if (pct == null) return <span className="muted-dash">{pos?.qty ? '…' : '—'}</span>;
+  const v = Math.round(pct * 100) / 100;
+  const cls = v > 0 ? 'up' : v < 0 ? 'down' : 'flat';
+  return (
+    <span className={`tk-pnlpct ${cls}`} title={`On ₹${price.format(pos.margin)} of your money deployed${pos.product === 'EQ_INTRADAY' ? ' (margin, not the 4× position value)' : ''}`}>
+      {v > 0 ? '+' : ''}{v.toFixed(2)}%
+    </span>
+  );
+}
+
 // ------------------------------------------------------------------ positions
 
 function PositionsCard({ book, quotes, onExit, exits, onChart }) {
@@ -694,7 +719,7 @@ function PositionsCard({ book, quotes, onExit, exits, onChart }) {
   const list = (book?.positions || []).map((p) => {
     const ltp = quotes[p.key]?.ltp ?? null;
     const open = p.qty && ltp != null ? (ltp - p.avg) * p.qty : p.qty ? null : 0;
-    return { ...p, ltp, open, total: open == null ? null : open + p.realizedToday - p.chargesToday };
+    return { ...p, ltp, open, pct: p.qty ? pnlPctOf(open, p) : null, total: open == null ? null : open + p.realizedToday - p.chargesToday };
   });
   const openSum = list.reduce((s, p) => s + (p.open || 0), 0);
   const bookedToday = book?.totals?.realizedToday ?? 0;
@@ -759,6 +784,7 @@ function PositionsCard({ book, quotes, onExit, exits, onChart }) {
                 <th className="num">Avg price</th>
                 <th className="num">LTP</th>
                 <th className="num">Open P&amp;L</th>
+                <th className="num">P&amp;L %</th>
                 <th className="num">Booked today</th>
                 <th className="num">Brokerage today</th>
                 <th className="num">Net today</th>
@@ -793,6 +819,7 @@ function PositionsCard({ book, quotes, onExit, exits, onChart }) {
                   <td className="num mono">{p.qty ? price.format(p.avg) : <span className="muted-dash">—</span>}</td>
                   <td className="num mono">{p.ltp != null ? price.format(p.ltp) : <span className="muted-dash">{p.qty ? '…' : '—'}</span>}</td>
                   <td className={`num mono ${tone(p.open)}`}>{p.qty ? (p.open != null ? signed.format(p.open) : '…') : <span className="muted-dash">—</span>}</td>
+                  <td className="num"><PnlPct pct={p.pct} pos={p} /></td>
                   <td className={`num mono ${tone(p.realizedToday)}`}>{signed.format(p.realizedToday)}</td>
                   <td className="num mono muted-cell">{p.chargesToday ? `−${price.format(p.chargesToday)}` : '0'}</td>
                   <td className={`num mono ${tone(p.total)}`}>{p.total != null ? <b>{signed.format(p.total)}</b> : '…'}</td>

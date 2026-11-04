@@ -304,6 +304,10 @@ table.ticker td { padding-top: 8px; padding-bottom: 8px; }
 .tk-pct.pos { background: color-mix(in srgb, var(--pos) 13%, transparent); }
 .tk-pct.neg { background: color-mix(in srgb, var(--neg) 13%, transparent); }
 .tk-bidask { font-size: 13px; }
+.tk-pnlpct { display: inline-block; min-width: 64px; text-align: right; font-family: var(--mono); font-size: 13px; font-weight: 600; padding: 3px 8px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.tk-pnlpct.up { color: var(--pos); background: color-mix(in srgb, var(--pos) 14%, transparent); }
+.tk-pnlpct.down { color: #ef4444; background: color-mix(in srgb, #ef4444 14%, transparent); }
+.tk-pnlpct.flat { color: #f59e0b; background: color-mix(in srgb, #f59e0b 14%, transparent); }
 .tk-time, .tk-time-h { font-size: 12.5px; }
 .tk-x { width: 1%; padding-left: 4px !important; padding-right: 10px !important; }
 .icon-btn { font: inherit; font-size: 18px; line-height: 1; width: 28px; height: 28px; border-radius: 7px; border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer; }
