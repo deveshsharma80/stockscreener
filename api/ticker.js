@@ -36,9 +36,13 @@
 // POST {action:"journal-note", id, note}              save a note ("" deletes it)
 // POST {action:"journal-delete", ids:[tradeId…]}      delete closed trades (their fills and notes)
 // POST {action:"paper-reset-bucket", product, amount} reset one trade type's money (keeps history)
+//
+// Equity Intraday auto square-off: from 15:09 IST (PAPER_SQUAREOFF_TIME) every open Equity Intraday
+// position is closed at the live price, and new Equity Intraday entries are refused until the close.
+// Runs with the price polls and ?action=check-orders (cron-job.org), so it works with every tab closed.
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
-import { PRODUCTS, addTrade, checkFunds, computeBook, deleteTrades, productFor, readAccount, readTrades, resetAccount, resetBucket, setCapital, validateOrder } from '../lib/paper.js';
+import { PRODUCTS, addTrade, inSquareOffWindow, squareOffLabel, checkFunds, computeBook, deleteTrades, productFor, readAccount, readTrades, resetAccount, resetBucket, setCapital, validateOrder } from '../lib/paper.js';
 import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../lib/journal.js';
 import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import {
@@ -324,6 +328,10 @@ async function placePaperTrade({ key, side, qty, product, orderId }) {
   const closesOnly = pos && (side === 'BUY' ? pos.qty < 0 : pos.qty > 0) && qty <= Math.abs(pos.qty);
   product = closesOnly ? pos.product : String(product || productFor(inst) || '').toUpperCase();
   if (product === 'OPT_BUY') product = productFor(inst); // older pages had a single options type
+  if (!closesOnly && product === 'EQ_INTRADAY' && inSquareOffWindow()) {
+    // cancelled: a trigger order reaching its price now is cancelled, not left failing
+    throw Object.assign(new HttpError(400, `Equity Intraday is closed for the day: positions are squared off at ${squareOffLabel()}. Only exits are allowed now.`, { kind: 'rules' }), { cancelled: true });
+  }
   if (!closesOnly) {
     const problem = validateOrder(book, inst, { key, side, qty, product });
     if (problem) throw new HttpError(400, problem, { kind: 'rules' });
@@ -350,6 +358,45 @@ const ORDER_PRODUCT = 'EQ_INTRADAY';
 
 /** Check pending orders; never fails the request that asked (quotes keep flowing). */
 async function checkOrders({ quotes: known = {}, fresh = false } = {}) {
+  const squared = await squareOffIntraday({ force: fresh });
+  const r = await checkPending({ quotes: known, fresh });
+  if (squared.length) r.events = [...squared, ...(r.events || [])];
+  return r;
+}
+
+// Square-off state for this server instance: checked at most every 20 s, and not again
+// today once nothing is left open (keeps storage reads low during the window).
+const sq = { date: '', done: false, lastAt: 0 };
+
+/** From 15:09 IST close every open Equity Intraday position at the live price. Never throws. */
+async function squareOffIntraday({ force = false, now = Date.now() } = {}) {
+  if (!inSquareOffWindow(now)) return [];
+  const date = new Date(now + 330 * 60_000).toISOString().slice(0, 10);
+  if (sq.date !== date) Object.assign(sq, { date, done: false, lastAt: 0 });
+  if (sq.done || (!force && now - sq.lastAt < 20_000)) return [];
+  sq.lastAt = now;
+  const events = [];
+  try {
+    const open = (await paperBook()).positions.filter((p) => p.qty !== 0 && p.product === 'EQ_INTRADAY');
+    let left = 0;
+    for (const p of open) {
+      try {
+        const t = await placePaperTrade({ key: p.key, side: p.qty > 0 ? 'SELL' : 'BUY', qty: Math.abs(p.qty), product: p.product });
+        events.push({ id: `sqoff-${t.id || p.key}`, kind: 'SQOFF', status: 'FILLED', key: p.key, symbol: p.symbol, side: t.side, filledQty: t.qty, fillPrice: t.price, at: new Date().toISOString() });
+      } catch (err) {
+        left++;
+        console.error('square-off', p.key, err.message); // tried again on the next check
+      }
+    }
+    if (events.length) await tidyExits(await paperBook()); // their SL / TP go away
+    sq.done = left === 0;
+  } catch (err) {
+    console.error('square-off', err.message);
+  }
+  return events;
+}
+
+async function checkPending({ quotes: known = {}, fresh = false } = {}) {
   try {
     const r = await processOrders({
       quotes: known,

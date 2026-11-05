@@ -29,6 +29,8 @@ export const orderLabel = (o) =>
 
 /** Toast / message text for an order that just changed. */
 export function eventText(o) {
+  if (o.kind === 'SQOFF')
+    return `Auto square-off: ${o.side === 'BUY' ? 'bought back' : 'sold'} ${(o.filledQty ?? '').toLocaleString('en-IN')} ${o.symbol} at ₹${price.format(o.fillPrice)}. Equity Intraday closes at 15:09.`;
   if (o.status === 'FILLED' && o.kind)
     return `${EXIT_LABEL[o.kind]} hit: ${o.side === 'BUY' ? 'bought' : 'sold'} ${(o.filledQty ?? '').toLocaleString('en-IN')} ${o.symbol} at ₹${price.format(o.fillPrice)} (level ₹${price.format(o.triggerPrice)}). Position closed.`;
   if (o.status === 'FILLED') return `${o.side === 'BUY' ? 'Bought' : 'Sold'} ${(o.filledQty ?? o.qty).toLocaleString('en-IN')} ${o.symbol} at ₹${price.format(o.fillPrice)} — your trigger ₹${price.format(o.triggerPrice)} was reached.`;
