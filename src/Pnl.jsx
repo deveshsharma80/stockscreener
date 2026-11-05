@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, fmtExpiry, kindOf, money, price, segLabel, signed, store } from './Ticker.jsx';
+import { BOOK_EVENT } from './Orders.jsx';
 
 // Paper-trading P&L reports: daily and weekly booked P&L, plus live open P&L.
 
@@ -35,6 +36,13 @@ export default function Pnl({ subview = 'overview' }) {
   const [potEdit, setPotEdit] = useState(null);
   const [potAmount, setPotAmount] = useState('');
   const [potStep, setPotStep] = useState(0);
+
+  // A position was exited from the running P&L pill
+  useEffect(() => {
+    const on = (e) => e.detail?.source === 'livepnl' && e.detail.book && setBook(e.detail.book);
+    window.addEventListener(BOOK_EVENT, on);
+    return () => window.removeEventListener(BOOK_EVENT, on);
+  }, []);
 
   const load = useCallback(async (s) => {
     try {

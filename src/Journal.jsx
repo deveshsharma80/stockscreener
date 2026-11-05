@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, money, price, signed, store } from './Ticker.jsx';
+import { BOOK_EVENT } from './Orders.jsx';
 
 // Trades: every paper trade from entry to exit, with P&L, timing and your
 // journal notes (saved on the server, table "trade_journal").
@@ -74,6 +75,14 @@ export default function Journal({ subview = 'all' }) {
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A position was exited from the running P&L pill → reload the trades
+  useEffect(() => {
+    if (!unlocked) return;
+    const on = (e) => e.detail?.source === 'livepnl' && load(secret);
+    window.addEventListener(BOOK_EVENT, on);
+    return () => window.removeEventListener(BOOK_EVENT, on);
+  }, [unlocked, secret, load]);
 
   // Live price for trades still open (every 5 s; slower when the tab is hidden)
   const openKeys = useMemo(() => [...new Set((data?.trips || []).filter((t) => t.status === 'OPEN').map((t) => t.key))].join(','), [data]);

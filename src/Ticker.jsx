@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ORDERS_EVENT, OrdersCard, emitOrders } from './Orders.jsx';
+import { BOOK_EVENT, ORDERS_EVENT, OrdersCard, QUOTES_EVENT, emitBook, emitOrders } from './Orders.jsx';
 import QuickTrade from './QuickTrade.jsx';
 
 // The chart library is only downloaded when a chart is opened.
@@ -196,6 +196,15 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
   // positions are always priced, even if removed from the watchlist.
   const positions = book?.positions || [];
   const posByKey = useMemo(() => new Map(positions.map((p) => [p.key, p])), [positions]);
+  // Share the paper book with the running P&L pill; take changes made there (Exit)
+  useEffect(() => {
+    if (book) emitBook(book, 'ticker');
+  }, [book]);
+  useEffect(() => {
+    const on = (e) => e.detail?.source !== 'ticker' && e.detail?.book && setBook(e.detail.book);
+    window.addEventListener(BOOK_EVENT, on);
+    return () => window.removeEventListener(BOOK_EVENT, on);
+  }, []);
   // Orders placed elsewhere (First Hit popup, cancel)
   useEffect(() => {
     const on = (e) => e.detail?.orders && setOrders(e.detail.orders);
@@ -222,6 +231,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
         if (!alive) return;
         setQuotes((prev) => ({ ...prev, ...j.quotes }));
         setMarket(j.market);
+        window.dispatchEvent(new CustomEvent(QUOTES_EVENT, { detail: { quotes: j.quotes, market: j.market } }));
         setLastAt(new Date(j.at));
         setFeedError(null);
         // A trigger order filled / expired during this poll: refresh orders and the paper book

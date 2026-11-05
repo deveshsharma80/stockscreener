@@ -8,6 +8,11 @@ import { api, price } from './Ticker.jsx';
 export const ORDERS_EVENT = 'stockhits:orders';
 /** Tell the rest of the page about order changes: { events?, pending?, placed?, orders? } */
 export const emitOrders = (detail) => window.dispatchEvent(new CustomEvent(ORDERS_EVENT, { detail }));
+/** The paper book changed (a trade or exit): { book, source } */
+export const BOOK_EVENT = 'stockhits:book';
+export const emitBook = (book, source) => window.dispatchEvent(new CustomEvent(BOOK_EVENT, { detail: { book, source } }));
+/** Fresh quotes from the Ticker's poll, so the running P&L pill needn't poll too: { quotes, market } */
+export const QUOTES_EVENT = 'stockhits:quotes';
 
 const istTime = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
 const istDay = new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });

@@ -8,6 +8,7 @@ import Crypto from './Crypto.jsx';
 import Movers from './Movers.jsx';
 import FirstHits from './FirstHits.jsx';
 import Login from './Login.jsx';
+import LivePnl from './LivePnl.jsx';
 import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
 import { SECRET_KEY as TICKER_SECRET, api as tickerApi, price as num, store as tickerStore } from './Ticker.jsx';
 import { ORDERS_EVENT, emitOrders, eventText } from './Orders.jsx';
@@ -988,6 +989,11 @@ function Shell({ auth, onLogout }) {
               <h1>{section.label}</h1>
               <p className="sub">{current[2]}</p>
             </div>
+            {group.id === 'nse' && (
+              <div className="pagehead-pnl">
+                <LivePnl />
+              </div>
+            )}
             <div className="pagehead-actions" ref={setActionsEl} />
           </div>
           <nav className="subnav" aria-label={`${section.label} pages`}>
