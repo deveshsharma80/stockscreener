@@ -323,12 +323,12 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
         return { ...r, order: i, q, pos: p || null, openPnl, pnlPct: pnlPctOf(openPnl, p) };
       })
       .filter((r) => tab === 'all' || kindOf(r.segment) === tab);
-    if (sort.key === 'order') return list;
+    if (sort.key === 'order') return list.reverse(); // newest added first
     const val = (r) => (sort.key === 'name' ? describe(r) : sort.key === 'openPnl' ? r.openPnl : sort.key === 'pnlPct' ? r.pnlPct : sort.key === 'posQty' ? r.pos?.qty || null : r.q?.[sort.key] ?? null);
     return list.sort((a, b) => {
       const x = val(a);
       const y = val(b);
-      if (x === null && y === null) return a.order - b.order;
+      if (x === null && y === null) return b.order - a.order;
       if (x === null) return 1;
       if (y === null) return -1;
       const c = typeof x === 'string' ? x.localeCompare(y) : x - y;
@@ -458,7 +458,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
             ))}
           </div>
           {sort.key !== 'order' && (
-            <button className="link" onClick={() => setSort({ key: 'order', dir: 'asc' })}>Back to my order</button>
+            <button className="link" onClick={() => setSort({ key: 'order', dir: 'asc' })}>Back to newest first</button>
           )}
           <span className="tk-paper-tag">Buy / Sell are paper trades — no real orders</span>
         </div>

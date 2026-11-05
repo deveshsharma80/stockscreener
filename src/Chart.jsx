@@ -59,6 +59,18 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
   const [emaDraft, setEmaDraft] = useState(() => ({ fast: String(readEma().fast), slow: String(readEma().slow) }));
   const [cross, setCross] = useState({ last: null, count: 0 });
   const [exitState, setExitState] = useState(null); // { kind: 'busy'|'ok'|'err', text }
+  const [expanded, setExpanded] = useState(false); // chart panel fills the whole window
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e) => e.key === 'Escape' && !e.defaultPrevented && setExpanded(false);
+    window.addEventListener('keydown', onKey);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden'; // no page scroll behind the full-screen chart
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = overflow;
+    };
+  }, [expanded]);
   const emaRef = useRef({ fast: [], slow: [], drawnLen: 0 });
   const emaCfgRef = useRef(emaCfg);
   emaCfgRef.current = emaCfg;
@@ -438,7 +450,7 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
   };
 
   return (
-    <section className="card tk-chart">
+    <section className={`card tk-chart ${expanded ? 'expanded' : ''}`}>
       <div className="card-head">
         <div className="tk-chart-title">
           <h2 className="mono">{describe(row)}</h2>
@@ -479,6 +491,21 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
               Trade
             </button>
           )}
+          <button
+            className="btn tk-expand-btn"
+            onClick={() => setExpanded((v) => !v)}
+            aria-pressed={expanded}
+            aria-label={expanded ? 'Exit full screen' : 'Expand chart to full screen'}
+            title={expanded ? 'Exit full screen (Esc)' : 'Expand chart to full screen'}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {expanded ? (
+                <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+              ) : (
+                <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+              )}
+            </svg>
+          </button>
           <button className="btn btn-close" onClick={onClose}>Close chart</button>
         </div>
       </div>
