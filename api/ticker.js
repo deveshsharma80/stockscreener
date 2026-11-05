@@ -28,7 +28,8 @@
 // POST {action:"place-order", symbol|key, side, qty, triggerPrice, refPrice?, source?}
 //      also adds the stock to the Ticker
 // POST {action:"cancel-order", id}
-// GET  ?action=check-orders                           check prices now (for an outside scheduler, e.g. every minute)
+// GET  ?action=check-orders                           check prices now (for an outside scheduler, e.g. every minute;
+//                                                    accepts the limited CRON_SECRET)
 // POST {action:"set-exit", key, kind:"SL"|"TP", price|null}   stop loss / take profit for an open position
 //
 // Trade journal (fills grouped into entry → exit trades, with your notes):
@@ -75,10 +76,9 @@ export default async function handler(req, res) {
     if (process.env.VERCEL && !String(process.env.WEBHOOK_SECRET || '').trim()) {
       throw new HttpError(403, 'Set WEBHOOK_SECRET in Vercel to use the Ticker page.');
     }
-    checkSecret(req);
-
     const body = req.method === 'POST' ? parseBody(req) || {} : {};
     const action = req.method === 'POST' ? body.action : req.query?.action;
+    checkSecret(req, { cron: action === 'check-orders' }); // the scheduler may use CRON_SECRET
 
     switch (`${req.method} ${action}`) {
       case 'GET status':

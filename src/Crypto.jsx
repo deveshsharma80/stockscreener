@@ -817,7 +817,7 @@ function ScanPanel({ secret, onListChanged }) {
             <ol className="scan-steps">
               <li>Sign up free at <a className="link" href="https://cron-job.org" target="_blank" rel="noopener noreferrer">cron-job.org</a> → <b>Create cronjob</b>.</li>
               <li>
-                URL (replace YOUR_SECRET with your webhook secret):
+                URL (replace YOUR_SECRET with your CRON_SECRET, or your webhook secret if you haven't set one):
                 <code className="scan-url">{url}</code>
                 <button className="btn" onClick={() => navigator.clipboard?.writeText(url).then(() => (setCopied(true), setTimeout(() => setCopied(false), 1500)))}>{copied ? 'Copied ✓' : 'Copy URL'}</button>
               </li>

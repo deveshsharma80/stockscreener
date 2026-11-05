@@ -81,9 +81,9 @@ export default async function handler(req, res) {
     if (process.env.VERCEL && !String(process.env.WEBHOOK_SECRET || '').trim()) {
       throw new HttpError(403, 'Set WEBHOOK_SECRET in Vercel to use the Crypto pages.');
     }
-    checkSecret(req);
     const body = req.method === 'POST' ? parseBody(req) || {} : {};
     const action = req.method === 'POST' ? body.action : req.query?.action;
+    checkSecret(req, { cron: action === 'scan' }); // the daily scan may use CRON_SECRET
 
     switch (`${req.method} ${action}`) {
       case 'GET watchlist': {

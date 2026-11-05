@@ -38,7 +38,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    checkSecret(req);
+    checkSecret(req, { cron: true }); // Chartink may use the limited CRON_SECRET
 
     const body = parseBody(req);
     const chartink = isChartinkPayload(body);

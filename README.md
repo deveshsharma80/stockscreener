@@ -67,6 +67,13 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 - Instruments come from Dhan's public scrip master CSV (NSE/BSE equity, indices, and live NSE/BSE F&O contracts), cached once a day. The first search of the day takes a few seconds while it downloads.
 - `DHAN_MOCK=1` runs the page on simulated prices for testing.
 
+## Equity Intraday auto square-off (15:09)
+
+- From **15:09 IST** every open Equity Intraday position is closed at the live price (a paper trade), and its SL / TP are removed. A pop-up tells you what was squared off.
+- After 15:09 new Equity Intraday entries (including trigger orders reaching their price) are refused until the next day; exits are still allowed. Options aren't affected.
+- It runs with the price checks: any open app page, or the cron-job.org `check-orders` job — keep that job running every minute so it happens with all tabs closed.
+- Change the time with `PAPER_SQUAREOFF_TIME` in Vercel, e.g. `15:15`.
+
 ## Trigger orders (Buy / Sell at your price)
 
 - Always **Equity Intraday** (4× leverage, 0.025% brokerage per side), NSE/BSE stocks only.
@@ -74,7 +81,7 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 - Valid until 3:30 PM IST of the current session (placed after the close or on a weekend → the next weekday's session). Unfilled orders become **Expired**.
 - Paper funds are checked when you place the order and again when it fills; if they've run out it's marked **Not placed**.
 - Checked only during market hours: on every price refresh of the Market pages, and every ~10 s from any other page of the app (the secret must be remembered on that device).
-- With every tab closed, nothing checks prices unless you add a scheduler. Free option: [cron-job.org](https://cron-job.org) → new cron job → URL `https://YOUR-APP.vercel.app/api/ticker?action=check-orders&secret=YOUR_SECRET`, every 1 minute, Mon–Fri. Each call checks waiting orders once.
+- With every tab closed, nothing checks prices unless you add a scheduler. Free option: [cron-job.org](https://cron-job.org) → new cron job → URL `https://YOUR-APP.vercel.app/api/ticker?action=check-orders&secret=YOUR_CRON_SECRET`, every 1 minute, Mon–Fri. Each call checks waiting orders once.
 - Stored in `paper_orders`. Waiting orders stay in place when you reset the paper account.
 - Testing outside market hours: set `PAPER_ORDERS_IGNORE_HOURS=1` (with `DHAN_MOCK=1` locally) so orders trigger any time.
 
@@ -97,7 +104,7 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 - Checks **every Binance USDT spot pair** (leveraged UP/DOWN tokens excluded) and adds any coin whose **daily candle is up ≥ N %** (default 40 %: close ≥ 1.40 × open, using the live price for today's candle) to the crypto watchlist. Binance's day starts 00:00 UTC = 5:30 AM IST.
 - Each coin is added at most once per day; if you remove it, it isn't re-added that day. Coins found are listed under **Daily mover scan** on Crypto › Coins, and tagged "Auto +62%" in the watchlist. The list holds at most 100 coins; extra finds are logged as "List full".
 - **Run it 24/7** with a free scheduler (cron-job.org), every 15 minutes:
-  `https://YOUR-APP.vercel.app/api/crypto?action=scan&minPct=40&secret=YOUR_SECRET`
+  `https://YOUR-APP.vercel.app/api/crypto?action=scan&minPct=40&secret=YOUR_CRON_SECRET`
   Change `minPct` to change the threshold. **Scan now** on the page runs it immediately.
 - Uses Binance's trading-day ticker (100 coins per request, ~5 requests per run). Blob is only touched when a coin qualifies for the first time that day.
 - `vercel.json` sets the function region to **Mumbai (`bom1`)**: Binance blocks requests from US servers, which is Vercel's default. (Mumbai is also next to Dhan.)
@@ -117,7 +124,7 @@ Older links (`#/`, `#/screener`, `#/ticker`, `#/pnl`) redirect to the matching p
 Chartink payloads are detected automatically. In the Chartink alert, set **Webhook URL** to:
 
 ```
-https://YOUR-APP.vercel.app/api/webhook?secret=YOUR_SECRET&target=5
+https://YOUR-APP.vercel.app/api/webhook?secret=YOUR_CRON_SECRET&target=5
 ```
 
 The dashboard's **Connect Chartink** panel builds this URL for you. Chartink can't send custom headers, so the secret goes in the URL.
@@ -178,6 +185,17 @@ Set `WEBHOOK_SECRET`. Callers then pass it as any of:
 - header `X-Webhook-Secret: <secret>`
 - header `Authorization: Bearer <secret>`
 - query string `https://YOUR-APP.vercel.app/api/webhook?secret=<secret>` — for tools that can't set headers
+
+#### Two secrets: admin and limited (`CRON_SECRET`)
+
+URLs pasted into Chartink and cron-job.org are seen by those services, so give them a secret that can do very little:
+
+| Secret | Works for | Use it in |
+|---|---|---|
+| `WEBHOOK_SECRET` (admin) | everything: trades, resets, deletes, settings | nowhere outside the app — keep it private |
+| `CRON_SECRET` (limited) | only `POST /api/webhook` (Chartink), `/api/ticker?action=check-orders`, `/api/crypto?action=scan` | Chartink alert URL, cron-job.org jobs |
+
+`CRON_SECRET` used anywhere else is refused (403). Without `CRON_SECRET` set, everything uses `WEBHOOK_SECRET` as before.
 
 ## Run locally
 

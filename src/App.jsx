@@ -441,7 +441,7 @@ function WebhookInfo({ secretRequired }) {
       </div>
       <p className="muted small">
         {secretRequired
-          ? 'A secret is required: send it as the X-Webhook-Secret header, Authorization: Bearer <secret>, or ?secret=<secret> in the URL.'
+          ? 'A secret is required: send it as the X-Webhook-Secret header, Authorization: Bearer <secret>, or ?secret=<secret> in the URL. In Chartink use your CRON_SECRET (it can only add signals), not the admin WEBHOOK_SECRET.'
           : 'No secret is set, so anyone with this URL can post. Set WEBHOOK_SECRET in Vercel to lock it down.'}
       </p>
       <div className="code-head">
