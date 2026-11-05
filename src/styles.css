@@ -1024,7 +1024,7 @@ tr.pot-reset-row > td { background: var(--surface-2); padding: 4px 12px 10px !im
 .lp-dot { width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; animation: jr-pulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .lp-dot { animation: none; } }
 
-.lp-scrim { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.35); display: flex; justify-content: flex-end; align-items: flex-start; padding: 104px 24px 24px; }
+.lp-scrim { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; justify-content: flex-end; align-items: flex-start; padding: 104px 24px 24px; }
 .lp-panel { width: min(860px, 100%); max-height: calc(100vh - 128px); overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
 .lp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border); }
 .lp-head h2 { margin: 0 0 4px; font-size: 18px; }
