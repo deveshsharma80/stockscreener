@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CandlestickSeries, HistogramSeries, LineSeries, LineStyle, createChart, createSeriesMarkers } from 'lightweight-charts';
 import { IST_OFFSET, aggregate, applyTick, crossovers, ema } from './candles.js';
-import { api, describe, kindOf, price, productFor, segLabel, signed, store } from './Ticker.jsx';
+import { api, describe, kindOf, pnlPctOf, price, productFor, segLabel, signed, store } from './Ticker.jsx';
 
 // 3- and 5-minute candlestick chart for one instrument. History comes from
 // Dhan's 1-minute intraday candles (refreshed every minute); the current
@@ -463,6 +463,18 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
               Holding <b className={position.qty > 0 ? 'long' : 'short'}>{position.qty > 0 ? `+${position.qty}` : position.qty}</b> @ {price.format(position.avg)}
             </span>
           )}
+          {position && (() => {
+            const pnl = quote?.ltp != null ? (quote.ltp - position.avg) * position.qty : null;
+            const pct = pnlPctOf(pnl, position);
+            const cls = pnl > 0 ? 'up' : pnl < 0 ? 'down' : 'flat';
+            return (
+              <span className={`tk-chart-pnl ${cls}`} title={`Running P&L before brokerage${pct != null ? ` · % on ₹${price.format(position.margin)} deployed` : ''}`}>
+                <span className="lbl">P&amp;L</span>
+                <b className="mono">{pnl != null ? signed.format(pnl) : '…'}</b>
+                {pct != null && <span className="mono pct">{pct > 0 ? '+' : ''}{pct.toFixed(2)}%</span>}
+              </span>
+            );
+          })()}
           {position && (
             <button
               className="btn danger-outline tk-chart-exit"
@@ -506,7 +518,11 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
               )}
             </svg>
           </button>
-          <button className="btn btn-close" onClick={onClose}>Close chart</button>
+          <button className="btn tk-close-icon" onClick={onClose} aria-label="Close chart" title="Close chart">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
         </div>
       </div>
       {position && onSetExit && (
