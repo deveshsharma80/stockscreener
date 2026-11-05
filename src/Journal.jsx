@@ -75,7 +75,7 @@ export default function Journal({ subview = 'all' }) {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live price for trades still open (every 10 s; slower when the tab is hidden)
+  // Live price for trades still open (every 5 s; slower when the tab is hidden)
   const openKeys = useMemo(() => [...new Set((data?.trips || []).filter((t) => t.status === 'OPEN').map((t) => t.key))].join(','), [data]);
   useEffect(() => {
     if (!unlocked || !openKeys) return;
@@ -89,7 +89,7 @@ export default function Journal({ subview = 'all' }) {
       } catch {
         /* open P&L stays unknown */
       }
-      if (alive) timer = setTimeout(tick, document.hidden ? 30_000 : 10_000);
+      if (alive) timer = setTimeout(tick, document.hidden ? 30_000 : 5_000);
     };
     tick();
     return () => {
@@ -108,7 +108,11 @@ export default function Journal({ subview = 'all' }) {
       .map((t) => {
         const ltp = t.status === 'OPEN' ? quotes[t.key]?.ltp ?? null : null;
         const live = ltp != null ? t.openQty * (ltp - t.avgOpen) * (t.side === 'LONG' ? 1 : -1) : null;
-        return { ...t, ltp, live, total: t.status === 'OPEN' ? (live != null ? t.net + live : null) : t.net, note: notes[t.id] || null, date: istDate(t.openedAt) };
+        const total = t.status === 'OPEN' ? (live != null ? t.net + live : null) : t.net;
+        // Open trades: running P&L % on the money deployed (entry value ÷ leverage), like closed ones
+        const deployed = t.entryValue / (t.leverage || 1);
+        const marginPct = t.status === 'OPEN' ? (total != null && deployed > 0 ? Math.round((total / deployed) * 10_000) / 100 : null) : t.marginPct;
+        return { ...t, ltp, live, total, marginPct, note: notes[t.id] || null, date: istDate(t.openedAt) };
       })
       .filter((t) => !from || t.date >= from)
       .filter((t) => !type || t.product === type)
@@ -142,6 +146,7 @@ export default function Journal({ subview = 'all' }) {
     const wins = closed.filter((t) => t.net > 0);
     const net = rows.reduce((s, t) => s + t.net, 0);
     const pcts = closed.map((t) => t.marginPct).filter((v) => v != null);
+    const openRows = rows.filter((t) => t.status === 'OPEN');
     return {
       count: rows.length,
       open: rows.length - closed.length,
@@ -154,6 +159,7 @@ export default function Journal({ subview = 'all' }) {
       best: closed.reduce((a, t) => (!a || t.net > a.net ? t : a), null),
       worst: closed.reduce((a, t) => (!a || t.net < a.net ? t : a), null),
       noted: rows.filter((t) => t.note).length,
+      running: openRows.length ? (openRows.some((t) => t.live == null) ? null : openRows.reduce((s, t) => s + t.live, 0)) : undefined,
     };
   }, [rows]);
 
@@ -254,6 +260,11 @@ export default function Journal({ subview = 'all' }) {
           <div className="stat-label">Net P&amp;L (booked)</div>
           <div className={`stat-value ${tone(sum.net)}`}>{money(sum.net)}</div>
           <div className="stat-note">after ₹{price.format(sum.charges)} brokerage · avg {pctText(sum.avgPct)} per trade</div>
+          {sum.running !== undefined && (
+            <div className="stat-note jr-running-note">
+              <span className="jr-live-dot" aria-hidden="true" /> {sum.open} open: <b className={tone(sum.running)}>{sum.running != null ? money(sum.running) : '…'}</b> running
+            </div>
+          )}
         </div>
         <div className="stat">
           <div className="stat-label">Best / worst</div>
@@ -389,10 +400,17 @@ export default function Journal({ subview = 'all' }) {
                         </>
                       )}
                     </td>
-                    <td className="muted-cell">{held(t.holdMs) || <span className="muted-dash">—</span>}</td>
+                    <td className="muted-cell">
+                      {t.status === 'OPEN' ? <span title="Still open">{held(Date.now() - Date.parse(t.openedAt))}</span> : held(t.holdMs) || <span className="muted-dash">—</span>}
+                    </td>
                     <td className={`num mono ${tone(t.total)}`} title={`Gross ${signed.format(t.gross)} − brokerage ${price.format(t.charges)}${t.status === 'OPEN' ? ` + open ${t.live != null ? signed.format(t.live) : '…'}` : ''}`}>
                       {t.total != null ? <b>{signed.format(t.total)}</b> : '…'}
-                      {t.status === 'OPEN' && <small className="muted-cell"> incl. open</small>}
+                      {t.status === 'OPEN' && (
+                        <small className="jr-running">
+                          <span className="jr-live-dot" aria-hidden="true" /> Running
+                          {t.gross ? <span className="muted-cell"> · booked {signed.format(t.gross)}</span> : null}
+                        </small>
+                      )}
                     </td>
                     <td className={`num mono ${tone(t.marginPct)}`} title={t.marginPct != null ? `On the money you deployed${t.leverage > 1 ? ` (margin, ${t.leverage}× leverage) · ${pctText(t.pnlPct)} on full position value` : ''}` : undefined}>
                       {pctText(t.marginPct)}

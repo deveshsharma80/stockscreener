@@ -1000,3 +1000,10 @@ tr.pot-reset-row > td { background: var(--surface-2); padding: 4px 12px 10px !im
 }
 .btn.tk-row-trade:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .btn.tk-row-trade.on { background: color-mix(in srgb, var(--accent) 26%, transparent); border-color: var(--accent); }
+
+/* Trades page: running P&L of open trades */
+.jr-running { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 3px; font-size: 11.5px; font-weight: 600; color: #f59e0b; font-family: inherit; }
+.jr-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; animation: jr-pulse 1.6s ease-in-out infinite; vertical-align: middle; }
+.jr-running-note { margin-top: 4px; }
+@keyframes jr-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .jr-live-dot { animation: none; } }
