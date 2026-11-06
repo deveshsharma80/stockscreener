@@ -197,6 +197,19 @@ URLs pasted into Chartink and cron-job.org are seen by those services, so give t
 
 `CRON_SECRET` used anywhere else is refused (403). Without `CRON_SECRET` set, everything uses `WEBHOOK_SECRET` as before.
 
+## Moving storage from Vercel Blob to Neon Postgres
+
+Postgres is faster (one query per table instead of two Blob calls, and Neon Singapore is close to Mumbai) and has no monthly operation cap. The app keeps the same tables; each one becomes a row in `app_tables` (JSON). The Dhan instrument cache stays in Blob while Blob is connected.
+
+1. Vercel → your project → **Storage** → **Create Database** → **Neon** (Serverless Postgres), **Free** plan, region **Singapore (ap-southeast-1)** → connect it to the project (all environments). This adds `DATABASE_URL`. Redeploy.
+2. At a quiet time (market closed, no Chartink alerts due), signed in, open `https://YOUR-APP/api/admin?action=db-status` — it lists each table's rows in Blob and Postgres.
+3. Open `https://YOUR-APP/api/admin?action=db-copy&confirm=yes` — copies every Blob table into Postgres. Running it again skips tables already copied; `&overwrite=yes` re-copies (refused once Postgres is in use).
+4. Check `db-status` again: `"allMatch": true`.
+5. Vercel → Environment Variables → `DB_DRIVER` = `postgres` → redeploy. `db-status` now says `"inUse": "postgres"`.
+6. Keep the Blob store for a week as a backup. To go back, set `DB_DRIVER=blob` and redeploy (anything saved after the switch stays only in Postgres).
+
+Keep Neon inside the free 100 compute-hours: run cron-job.org's `check-orders` only on weekdays in market hours (09:00–15:35) and the crypto scan hourly rather than every 15 minutes.
+
 ## Run locally
 
 ```bash

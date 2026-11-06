@@ -12,6 +12,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "@vercel/blob": "^2.8.2",
     "lightweight-charts": "^5.2.1",
     "react": "^19.3.1",
