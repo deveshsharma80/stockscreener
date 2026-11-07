@@ -311,7 +311,7 @@ function Store({ secret, status, error, reload }) {
           )
         )}
       </section>
-      {connected && has && <Latest secret={secret} rows={status.latest} />}
+      {connected && has && <Views secret={secret} status={status} />}
     </>
   );
 }
@@ -332,6 +332,187 @@ const trendOf = (r) => {
   if (r.ema5 < r.ema9 && r.ema9 < r.ema21) return 'down';
   return 'mixed';
 };
+
+// ------------------------------------------------------------------ views
+
+const VIEW_KEY = 'stockhits.candleView';
+const readView = () => {
+  try {
+    return { view: 'all', rsi: '85', emaRatio: '1.01', coRatio: '1.05', scope: 'latest', ...JSON.parse(localStorage.getItem(VIEW_KEY) || '{}') };
+  } catch {
+    return { view: 'all', rsi: '85', emaRatio: '1.01', coRatio: '1.05', scope: 'latest' };
+  }
+};
+
+function Views({ secret, status }) {
+  const [v, setV] = useState(readView);
+  const set = (patch) =>
+    setV((x) => {
+      const n = { ...x, ...patch };
+      try {
+        localStorage.setItem(VIEW_KEY, JSON.stringify(n));
+      } catch {}
+      return n;
+    });
+  const tabs = [
+    ['all', 'All coins'],
+    ['rsi-ema', 'RSI + EMA 5/9'],
+    ['close-open', 'Close / Open'],
+  ];
+  return (
+    <>
+      <div className="seg cd-views" role="tablist" aria-label="Candle views">
+        {tabs.map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={v.view === id} className={v.view === id ? 'on' : ''} onClick={() => set({ view: id })}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {v.view === 'all' ? <Latest secret={secret} rows={status.latest} /> : <Filtered secret={secret} v={v} set={set} stamp={status.last} />}
+    </>
+  );
+}
+
+const ratioPct = (r) => {
+  const n = Number(r);
+  return Number.isFinite(n) && n > 0 ? `${n >= 1 ? '+' : ''}${((n - 1) * 100).toFixed(2)}%` : '';
+};
+
+function Filtered({ secret, v, set, stamp }) {
+  const rsiEma = v.view === 'rsi-ema';
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sort, setSort] = useState({ key: 't', dir: -1 });
+  const params = rsiEma ? { view: 'rsi-ema', rsi: v.rsi, ratio: v.emaRatio, scope: v.scope } : { view: 'close-open', ratio: v.coRatio, scope: v.scope };
+  const key = JSON.stringify(params);
+
+  // Run the query shortly after the inputs settle
+  useEffect(() => {
+    let alive = true;
+    const t = setTimeout(async () => {
+      setBusy(true);
+      try {
+        const j = await getJson(secret, 'candles-scan', params);
+        if (alive) {
+          setRes(j);
+          setErr('');
+        }
+      } catch (e) {
+        if (alive) setErr(e.message);
+      }
+      if (alive) setBusy(false);
+    }, 450);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [key, stamp]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const rows = useMemo(() => {
+    const out = (res?.rows || []).slice();
+    const val = (r) => (sort.key === 't' ? Date.parse(r.t) : sort.key === 'symbol' ? r.symbol : r[sort.key]);
+    return out.sort((a, b) => {
+      const x = val(a);
+      const y = val(b);
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return (x > y ? 1 : x < y ? -1 : 0) * sort.dir;
+    });
+  }, [res, sort]);
+
+  const Th = ({ k, children, className = '' }) => (
+    <th className={className} aria-sort={sort.key === k ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none'}>
+      <button onClick={() => setSort((s) => ({ key: k, dir: s.key === k ? -s.dir : k === 'symbol' ? 1 : -1 }))}>
+        {children}
+        <span className="arrow">{sort.key === k ? (sort.dir > 0 ? '▲' : '▼') : ''}</span>
+      </button>
+    </th>
+  );
+
+  return (
+    <section className="card">
+      <div className="card-head cd-filter-head">
+        <div className="cd-filters">
+          {rsiEma ? (
+            <>
+              <label className="cd-field">
+                <span>RSI 14 &gt;</span>
+                <input type="number" inputMode="decimal" min="0" max="100" step="any" value={v.rsi} onChange={(e) => set({ rsi: e.target.value })} aria-label="RSI above" />
+              </label>
+              <span className="cd-and">and</span>
+              <label className="cd-field">
+                <span>EMA 5 ÷ EMA 9 &gt;</span>
+                <input type="number" inputMode="decimal" min="0" step="any" value={v.emaRatio} onChange={(e) => set({ emaRatio: e.target.value })} aria-label="EMA 5 divided by EMA 9 above" />
+                <small className="muted-cell">{ratioPct(v.emaRatio)}</small>
+              </label>
+            </>
+          ) : (
+            <label className="cd-field">
+              <span>Close ÷ Open &gt;</span>
+              <input type="number" inputMode="decimal" min="0" step="any" value={v.coRatio} onChange={(e) => set({ coRatio: e.target.value })} aria-label="Close divided by open above" />
+              <small className="muted-cell">{ratioPct(v.coRatio)} in the hour</small>
+            </label>
+          )}
+        </div>
+        <div className="seg" role="group" aria-label="Which hours">
+          <button className={v.scope === 'latest' ? 'on' : ''} onClick={() => set({ scope: 'latest' })} title="Each coin's latest stored hour">Latest hour</button>
+          <button className={v.scope === 'all' ? 'on' : ''} onClick={() => set({ scope: 'all' })} title="Every stored hour in the last 3 months">Any hour (3 months)</button>
+        </div>
+      </div>
+      {err && <p className="status err tk-pos-msg">{err}</p>}
+      <div className="table-wrap">
+        <table className="ticker cd-table">
+          <thead>
+            <tr>
+              <Th k="symbol">Coin</Th>
+              <Th k="t">Hour (IST)</Th>
+              <Th k="open" className="num">Open</Th>
+              <Th k="close" className="num">Close</Th>
+              <Th k="closeOpen" className="num">Close ÷ Open</Th>
+              <Th k="rsi14" className="num">RSI 14</Th>
+              <Th k="ema5" className="num">EMA 5</Th>
+              <Th k="ema9" className="num">EMA 9</Th>
+              <Th k="emaRatio" className="num">EMA 5 ÷ 9</Th>
+              <Th k="ema21" className="num">EMA 21</Th>
+              <Th k="quoteVolume" className="num">Hour volume</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r.symbol}|${r.t}`}>
+                <td className="mono">
+                  <a className="link" href={`#/crypto/chart?s=${r.symbol}`}><b>{coin(r.symbol)}</b></a>
+                </td>
+                <td className="muted-cell">{when(r.t)}</td>
+                <td className="num mono">{fmtPrice(r.open)}</td>
+                <td className="num mono">{fmtPrice(r.close)}</td>
+                <td className={`num mono ${!rsiEma ? 'cd-hit' : ''} ${r.closeOpen > 1 ? 'pos' : r.closeOpen < 1 ? 'neg' : ''}`}>{r.closeOpen != null ? r.closeOpen.toFixed(4) : '—'}</td>
+                <td className={`num mono ${rsiEma ? 'cd-hit' : ''}`}>
+                  {r.rsi14 == null ? '—' : <span className={r.rsi14 >= 70 ? 'cd-rsi hot' : r.rsi14 <= 30 ? 'cd-rsi cold' : ''}>{r.rsi14.toFixed(1)}</span>}
+                </td>
+                <td className="num mono">{fmtPrice(r.ema5)}</td>
+                <td className="num mono">{fmtPrice(r.ema9)}</td>
+                <td className={`num mono ${rsiEma ? 'cd-hit' : ''}`}>{r.emaRatio != null ? r.emaRatio.toFixed(4) : '—'}</td>
+                <td className="num mono">{fmtPrice(r.ema21)}</td>
+                <td className="num mono">{fmtCompact(r.quoteVolume)}</td>
+              </tr>
+            ))}
+            {res && !rows.length && (
+              <tr>
+                <td colSpan={11} className="empty">No {v.scope === 'latest' ? 'coin\'s latest hour' : 'hour in the last 3 months'} matches.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="foot">
+        {busy ? 'Searching…' : res ? `${res.total.toLocaleString('en-IN')} match${res.total === 1 ? '' : 'es'}${res.total > res.limit ? ` · showing the newest ${res.limit.toLocaleString('en-IN')}` : ''}` : ''}
+        {v.scope === 'all' && res && <span className="muted-cell"> · one row per coin per hour</span>}
+      </div>
+    </section>
+  );
+}
 
 function Latest({ secret, rows }) {
   const [q, setQ] = useState('');

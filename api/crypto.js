@@ -9,6 +9,8 @@
 // GET  ?action=movers-history                 saved Big Movers history (one-time scan of past days)
 // POST {action:"movers-history", meta, rows}   save a new Big Movers scan (replaces the old one)
 // GET  ?action=candles-status                hourly perp candle store: totals + each coin's latest candle
+// GET  ?action=candles-scan&view=rsi-ema&rsi=85&ratio=1.01&scope=latest|all   RSI 14 > rsi and EMA5/EMA9 > ratio
+// GET  ?action=candles-scan&view=close-open&ratio=1.05&scope=latest|all       close / open > ratio
 // GET  ?action=candles&symbol=EVAAUSDT       one coin's stored hourly candles (oldest first)
 // POST {action:"candles-save", rows:[[symbol, timeMs, o, h, l, c, vol, quoteVol, rsi14, ema5, ema9, ema21], …]}
 // POST {action:"candles-prune"}              drop rows older than the 3-month window
@@ -20,7 +22,7 @@
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
-import { candleStatus, coinCandles, deleteAllCandles, pruneCandles, saveCandles } from '../lib/candles.js';
+import { candleStatus, coinCandles, deleteAllCandles, pruneCandles, saveCandles, scanCandles } from '../lib/candles.js';
 
 const TABLE = 'crypto_watchlist';
 const MAX = MAX_COINS;
@@ -145,6 +147,10 @@ export default async function handler(req, res) {
       }
       case 'GET candles-status':
         return res.json({ ok: true, ...(await candleStatus()) });
+      case 'GET candles-scan': {
+        const p = req.query || {};
+        return res.json({ ok: true, ...(await scanCandles({ view: p.view, rsi: p.rsi, ratio: p.ratio, scope: p.scope === 'all' ? 'all' : 'latest' })) });
+      }
       case 'GET candles':
         return res.json({ ok: true, symbol: String(req.query?.symbol || ''), candles: await coinCandles(String(req.query?.symbol || '').trim()) });
       case 'POST candles-save':

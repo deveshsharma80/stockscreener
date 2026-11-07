@@ -1094,3 +1094,12 @@ table.lp-table th:first-child, table.lp-table td:first-child { padding-left: 18p
 .cd-more { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
 .cd-more:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) { .cd-bar span { transition: none; } }
+.seg.cd-views { margin: 4px 0 12px; }
+.cd-filter-head { flex-wrap: wrap; gap: 12px; }
+.cd-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.cd-field { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.cd-field input { width: 96px; font: inherit; font-family: var(--mono); font-size: 14px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.cd-field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cd-field small { font-weight: 500; font-size: 12px; }
+.cd-and { color: var(--muted); font-size: 13px; }
+td.cd-hit { background: color-mix(in srgb, var(--accent) 7%, transparent); font-weight: 700; }
