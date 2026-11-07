@@ -8,13 +8,14 @@
 // GET  ?action=scan-hits                      coins found by the scan (latest first)
 // GET  ?action=movers-history                 saved Big Movers history (one-time scan of past days)
 // POST {action:"movers-history", meta, rows}   save a new Big Movers scan (replaces the old one)
-// GET  ?action=candles-status                hourly perp candle store: totals + each coin's latest candle
+// GET  ?action=candles-status                4-hour perp candle store: totals + each coin's latest candle
 // GET  ?action=candles-scan&view=rsi-ema&rsi=85&ratio=1.01&scope=latest|all   RSI 14 > rsi and EMA5/EMA9 > ratio
 // GET  ?action=candles-scan&view=close-open&ratio=1.05&scope=latest|all       close / open > ratio
-// GET  ?action=candles&symbol=EVAAUSDT       one coin's stored hourly candles (oldest first)
+// GET  ?action=candles&symbol=EVAAUSDT       one coin's stored 4-hour candles (oldest first)
 // POST {action:"candles-save", rows:[[symbol, timeMs, o, h, l, c, vol, quoteVol, rsi14, ema5, ema9, ema21], …]}
 // POST {action:"candles-prune"}              drop rows older than the 3-month window
 // POST {action:"candles-delete", confirm:true} delete all stored candles
+// POST {action:"candles-delete-hourly", confirm:true} delete the old hourly table (candles_1h)
 // GET  ?action=binance&path=/api/v3/klines&q=<query>
 //      fallback proxy for Binance public market data, used only if the
 //      browser can't reach Binance directly. Binance blocks some US servers;
@@ -22,7 +23,7 @@
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
-import { candleStatus, coinCandles, deleteAllCandles, pruneCandles, saveCandles, scanCandles } from '../lib/candles.js';
+import { candleStatus, coinCandles, deleteAllCandles, deleteHourlyCandles, pruneCandles, saveCandles, scanCandles } from '../lib/candles.js';
 
 const TABLE = 'crypto_watchlist';
 const MAX = MAX_COINS;
@@ -160,6 +161,9 @@ export default async function handler(req, res) {
       case 'POST candles-delete':
         if (body.confirm !== true) throw new HttpError(400, 'Send confirm: true to delete all candle data');
         return res.json({ ok: true, ...(await deleteAllCandles()) });
+      case 'POST candles-delete-hourly':
+        if (body.confirm !== true) throw new HttpError(400, 'Send confirm: true to delete the old hourly data');
+        return res.json({ ok: true, ...(await deleteHourlyCandles()) });
       case 'GET binance':
         return res.json({ ok: true, data: await proxy(String(req.query?.path || ''), String(req.query?.q || '')) });
       default:

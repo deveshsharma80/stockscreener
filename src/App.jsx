@@ -78,7 +78,7 @@ export const SECTIONS = [
     id: 'candles',
     label: 'Candle Data',
     icon: 'database',
-    tabs: [['hourly', 'Hourly perps', '3 months of hourly candles for every USDT perpetual, with RSI 14 and EMA 5 / 9 / 21']],
+    tabs: [['4h', '4-hour perps', '3 months of 4-hour candles for every USDT perpetual, with RSI 14 and EMA 5 / 9 / 21']],
   },
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.

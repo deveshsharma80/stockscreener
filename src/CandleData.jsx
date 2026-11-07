@@ -4,15 +4,16 @@ import { fmtCompact, fmtPrice, futuresKlines, perpSymbols, useProxy } from './bi
 import { cryptoApi } from './Crypto.jsx';
 import { ema, rsi } from './indicators.js';
 
-// Candle Data: 3 months of hourly candles for every Binance USDT perpetual,
-// with hourly RSI 14 and EMA 5 / 9 / 21, stored in Neon Postgres.
+// Candle Data: 3 months of 4-hour candles for every Binance USDT perpetual
+// (crypto and TradFi), with RSI 14 and EMA 5 / 9 / 21 on 4-hour closes, stored in Neon Postgres.
 // "Get / update data" downloads from Binance in this browser (paced to stay
 // well inside Binance's rate limit) and saves in batches; a second run only
-// fetches the hours added since the last one.
+// fetches the candles added since the last one.
 
-const H = 3_600_000;
+const H = 4 * 3_600_000; // one 4-hour candle
+const INTERVAL = '4h';
 const KEEP_DAYS = 92;
-const KEEP_HOURS = KEEP_DAYS * 24;
+const KEEP_CANDLES = KEEP_DAYS * 6; // 6 four-hour candles a day
 const WARMUP = 250; // extra older candles so RSI / EMA are settled at the start of the window
 const CONCURRENCY = 3;
 const WEIGHT_PER_MIN = 1500; // Binance allows 2,400 per minute per IP; leave room for the other pages
@@ -25,6 +26,9 @@ const sig = (v) => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecisi
 const istFmt = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
 const istDay = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 const when = (t) => (t ? istFmt.format(new Date(t)) : '—');
+const timeOnly = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+/** "7 Nov, 5:30 am – 9:30 am" for a 4-hour candle starting at t */
+const span = (t) => (t ? `${when(t)} – ${timeOnly.format(new Date(Date.parse(t) + H))}` : '—');
 const mb = (b) => (b == null ? '—' : b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(1)} MB`);
 const dur = (ms) => {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -127,7 +131,7 @@ function Store({ secret, status, error, reload }) {
       const symbols = await perpSymbols();
       const lastAt = Object.fromEntries((status?.latest || []).map((r) => [r.symbol, Date.parse(r.t)]));
       p.total = symbols.length;
-      p.phase = 'Downloading hourly candles from Binance';
+      p.phase = 'Downloading 4-hour candles from Binance';
       push();
 
       // Pacing: keep Binance request weight under WEIGHT_PER_MIN in any 60 s
@@ -160,16 +164,16 @@ function Store({ secret, status, error, reload }) {
       };
 
       const cutoff = Date.now() - KEEP_DAYS * 86_400_000;
-      const closedBefore = Math.floor(Date.now() / H) * H; // the current hour is still forming
+      const closedBefore = Math.floor(Date.now() / H) * H; // the current 4-hour candle is still forming
       const one = async (sym) => {
         const last = lastAt[sym];
-        const hours = last ? Math.ceil((closedBefore - last) / H) : KEEP_HOURS;
-        if (last && hours <= 0) return; // already up to date
-        const count = Math.min(KEEP_HOURS + WARMUP, hours + WARMUP + 1);
+        const missing = last ? Math.ceil((closedBefore - last) / H) : KEEP_CANDLES;
+        if (last && missing <= 0) return; // already up to date
+        const count = Math.min(KEEP_CANDLES + WARMUP, missing + WARMUP + 1);
         for (let attempt = 0; ; attempt++) {
           await take(weightFor(count));
           try {
-            const cs = (await futuresKlines(sym, '1h', count)).filter((c) => c.time * 1000 < closedBefore);
+            const cs = (await futuresKlines(sym, INTERVAL, count)).filter((c) => c.time * 1000 < closedBefore);
             const r14 = rsi(cs, 14);
             const e5 = ema(cs, 5);
             const e9 = ema(cs, 9);
@@ -187,7 +191,7 @@ function Store({ secret, status, error, reload }) {
               p.phase = 'Binance asked to slow down — pausing for a minute';
               push();
               await sleep(65_000);
-              p.phase = 'Downloading hourly candles from Binance';
+              p.phase = 'Downloading 4-hour candles from Binance';
               continue;
             }
             throw e;
@@ -241,6 +245,16 @@ function Store({ secret, status, error, reload }) {
     }
   };
 
+  const deleteLegacy = async () => {
+    try {
+      await cryptoApi(secret, 'candles-delete-hourly', { method: 'POST', body: { confirm: true } });
+      setMsg({ kind: 'ok', text: `Old hourly data deleted (${mb(status.legacyBytes)} freed).` });
+      reload();
+    } catch (e) {
+      setMsg({ kind: 'err', text: e.message });
+    }
+  };
+
   const connected = status?.connected !== false;
   const has = (status?.candles || 0) > 0;
   const busy = run?.active;
@@ -251,7 +265,7 @@ function Store({ secret, status, error, reload }) {
     <>
       <section className="card">
         <div className="card-head">
-          <h2>Hourly candles · USDT perpetuals</h2>
+          <h2>4-hour candles · USDT perpetuals</h2>
           <div className="form-actions">
             {busy ? (
               <button className="btn" onClick={() => (cancel.current = true)} disabled={cancel.current}>Stop</button>
@@ -279,9 +293,15 @@ function Store({ secret, status, error, reload }) {
             <Stat label="Coins" value={status?.coins ?? 0} />
             <Stat label="Candles" value={(status?.candles ?? 0).toLocaleString('en-IN')} />
             <Stat label="From" value={status?.first ? istDay.format(new Date(status.first)) : '—'} />
-            <Stat label="Latest hour" value={when(status?.last)} />
+            <Stat label="Latest candle" value={when(status?.last)} note="start time, IST" />
             <Stat label="Storage used" value={mb(status?.bytes)} note="of Neon's 1 GB free" />
           </div>
+        )}
+        {status?.legacyBytes > 0 && !busy && (
+          <p className="status cd-legacy">
+            Old hourly data from before the switch to 4-hour candles is still stored ({mb(status.legacyBytes)}).{' '}
+            <button className="btn cd-csv" onClick={deleteLegacy}>Delete old hourly data</button>
+          </p>
         )}
         {busy || run ? (
           <div className="cd-progress">
@@ -305,8 +325,8 @@ function Store({ secret, status, error, reload }) {
         ) : (
           connected && (
             <p className="tk-note cd-note">
-              {has ? 'Update fetches only the hours added since the last run (a minute or two). ' : 'The first run downloads about 3 months × 24 hours for each of ~600 coins; it takes 5–10 minutes. Keep this tab open. '}
-              Data older than {KEEP_DAYS} days is removed automatically. RSI 14 and EMA 5 / 9 / 21 are on hourly closes (TradingView formulas).
+              {has ? 'Update fetches only the 4-hour candles added since the last run (under a minute). ' : 'The first run downloads about 3 months of 4-hour candles (≈ 550 each) for all ~750 perpetuals; it takes about 3 minutes. Keep this tab open. '}
+              Data older than {KEEP_DAYS} days is removed automatically. Only completed candles are stored. RSI 14 and EMA 5 / 9 / 21 are on 4-hour closes (TradingView formulas).
             </p>
           )
         )}
@@ -451,13 +471,13 @@ function Filtered({ secret, v, set, stamp }) {
             <label className="cd-field">
               <span>Close ÷ Open &gt;</span>
               <input type="number" inputMode="decimal" min="0" step="any" value={v.coRatio} onChange={(e) => set({ coRatio: e.target.value })} aria-label="Close divided by open above" />
-              <small className="muted-cell">{ratioPct(v.coRatio)} in the hour</small>
+              <small className="muted-cell">{ratioPct(v.coRatio)} in the 4 hours</small>
             </label>
           )}
         </div>
-        <div className="seg" role="group" aria-label="Which hours">
-          <button className={v.scope === 'latest' ? 'on' : ''} onClick={() => set({ scope: 'latest' })} title="Each coin's latest stored hour">Latest hour</button>
-          <button className={v.scope === 'all' ? 'on' : ''} onClick={() => set({ scope: 'all' })} title="Every stored hour in the last 3 months">Any hour (3 months)</button>
+        <div className="seg" role="group" aria-label="Which candles">
+          <button className={v.scope === 'latest' ? 'on' : ''} onClick={() => set({ scope: 'latest' })} title="Each coin's latest stored 4-hour candle">Latest candle</button>
+          <button className={v.scope === 'all' ? 'on' : ''} onClick={() => set({ scope: 'all' })} title="Every stored 4-hour candle in the last 3 months">Any candle (3 months)</button>
         </div>
       </div>
       {err && <p className="status err tk-pos-msg">{err}</p>}
@@ -466,7 +486,7 @@ function Filtered({ secret, v, set, stamp }) {
           <thead>
             <tr>
               <Th k="symbol">Coin</Th>
-              <Th k="t">Hour (IST)</Th>
+              <Th k="t">Candle (IST)</Th>
               <Th k="open" className="num">Open</Th>
               <Th k="close" className="num">Close</Th>
               <Th k="closeOpen" className="num">Close ÷ Open</Th>
@@ -475,7 +495,7 @@ function Filtered({ secret, v, set, stamp }) {
               <Th k="ema9" className="num">EMA 9</Th>
               <Th k="emaRatio" className="num">EMA 5 ÷ 9</Th>
               <Th k="ema21" className="num">EMA 21</Th>
-              <Th k="quoteVolume" className="num">Hour volume</Th>
+              <Th k="quoteVolume" className="num">Volume (4h)</Th>
             </tr>
           </thead>
           <tbody>
@@ -484,7 +504,7 @@ function Filtered({ secret, v, set, stamp }) {
                 <td className="mono">
                   <a className="link" href={`#/crypto/chart?s=${r.symbol}`}><b>{coin(r.symbol)}</b></a>
                 </td>
-                <td className="muted-cell">{when(r.t)}</td>
+                <td className="muted-cell cd-span">{span(r.t)}</td>
                 <td className="num mono">{fmtPrice(r.open)}</td>
                 <td className="num mono">{fmtPrice(r.close)}</td>
                 <td className={`num mono ${!rsiEma ? 'cd-hit' : ''} ${r.closeOpen > 1 ? 'pos' : r.closeOpen < 1 ? 'neg' : ''}`}>{r.closeOpen != null ? r.closeOpen.toFixed(4) : '—'}</td>
@@ -500,7 +520,7 @@ function Filtered({ secret, v, set, stamp }) {
             ))}
             {res && !rows.length && (
               <tr>
-                <td colSpan={11} className="empty">No {v.scope === 'latest' ? 'coin\'s latest hour' : 'hour in the last 3 months'} matches.</td>
+                <td colSpan={11} className="empty">No {v.scope === 'latest' ? 'coin\'s latest candle' : '4-hour candle in the last 3 months'} matches.</td>
               </tr>
             )}
           </tbody>
@@ -508,7 +528,7 @@ function Filtered({ secret, v, set, stamp }) {
       </div>
       <div className="foot">
         {busy ? 'Searching…' : res ? `${res.total.toLocaleString('en-IN')} match${res.total === 1 ? '' : 'es'}${res.total > res.limit ? ` · showing the newest ${res.limit.toLocaleString('en-IN')}` : ''}` : ''}
-        {v.scope === 'all' && res && <span className="muted-cell"> · one row per coin per hour</span>}
+        {v.scope === 'all' && res && <span className="muted-cell"> · one row per coin per 4-hour candle</span>}
       </div>
     </section>
   );
@@ -554,7 +574,7 @@ function Latest({ secret, rows }) {
       const blob = new Blob([[head, ...lines].join('\n')], { type: 'text/csv' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `${symbol}_1h_${KEEP_DAYS}d.csv`;
+      a.download = `${symbol}_4h_${KEEP_DAYS}d.csv`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     } catch (e) {
@@ -566,7 +586,7 @@ function Latest({ secret, rows }) {
   return (
     <section className="card">
       <div className="card-head">
-        <h2>Latest hour per coin</h2>
+        <h2>Latest 4-hour candle per coin</h2>
         <input className="search cd-search" placeholder="Find coin…" value={q} onChange={(e) => (setQ(e.target.value), setLimit(PAGE))} aria-label="Find coin" />
       </div>
       {err && <p className="status err tk-pos-msg">{err}</p>}
@@ -575,9 +595,9 @@ function Latest({ secret, rows }) {
           <thead>
             <tr>
               <Th k="symbol">Coin</Th>
-              <Th k="t">Hour (IST)</Th>
+              <Th k="t">Candle (IST)</Th>
               <Th k="close" className="num">Close</Th>
-              <Th k="quoteVolume" className="num">Hour volume</Th>
+              <Th k="quoteVolume" className="num">Volume (4h)</Th>
               <Th k="rsi14" className="num">RSI 14</Th>
               <Th k="ema5" className="num">EMA 5</Th>
               <Th k="ema9" className="num">EMA 9</Th>
@@ -593,7 +613,7 @@ function Latest({ secret, rows }) {
                 <td className="mono">
                   <a className="link" href={`#/crypto/chart?s=${r.symbol}`}><b>{coin(r.symbol)}</b></a>
                 </td>
-                <td className="muted-cell">{when(r.t)}</td>
+                <td className="muted-cell cd-span">{span(r.t)}</td>
                 <td className="num mono">{fmtPrice(r.close)}</td>
                 <td className="num mono">{fmtCompact(r.quoteVolume)}</td>
                 <td className="num mono">
@@ -607,7 +627,7 @@ function Latest({ secret, rows }) {
                 </td>
                 <td className="num mono muted-cell">{r.count.toLocaleString('en-IN')}</td>
                 <td className="num">
-                  <button className="btn cd-csv" onClick={() => csv(r.symbol)} disabled={busy === r.symbol} title={`Download ${coin(r.symbol)} hourly candles with RSI and EMAs (CSV)`}>
+                  <button className="btn cd-csv" onClick={() => csv(r.symbol)} disabled={busy === r.symbol} title={`Download ${coin(r.symbol)} 4-hour candles with RSI and EMAs (CSV)`}>
                     {busy === r.symbol ? '…' : 'CSV'}
                   </button>
                 </td>
@@ -617,7 +637,7 @@ function Latest({ secret, rows }) {
         </table>
       </div>
       <div className="foot">
-        {list.length} coin{list.length === 1 ? '' : 's'} · hourly closes from Binance USDⓈ-M Futures
+        {list.length} coin{list.length === 1 ? '' : 's'} · 4-hour closes from Binance USDⓈ-M Futures
         {list.length > limit && (
           <>
             {' · '}

@@ -1103,3 +1103,5 @@ table.lp-table th:first-child, table.lp-table td:first-child { padding-left: 18p
 .cd-field small { font-weight: 500; font-size: 12px; }
 .cd-and { color: var(--muted); font-size: 13px; }
 td.cd-hit { background: color-mix(in srgb, var(--accent) 7%, transparent); font-weight: 700; }
+.status.cd-legacy { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; padding: 10px 18px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+td.cd-span { white-space: nowrap; }
