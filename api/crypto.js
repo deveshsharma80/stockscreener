@@ -8,6 +8,11 @@
 // GET  ?action=scan-hits                      coins found by the scan (latest first)
 // GET  ?action=movers-history                 saved Big Movers history (one-time scan of past days)
 // POST {action:"movers-history", meta, rows}   save a new Big Movers scan (replaces the old one)
+// GET  ?action=candles-status                hourly perp candle store: totals + each coin's latest candle
+// GET  ?action=candles&symbol=EVAAUSDT       one coin's stored hourly candles (oldest first)
+// POST {action:"candles-save", rows:[[symbol, timeMs, o, h, l, c, vol, quoteVol, rsi14, ema5, ema9, ema21], …]}
+// POST {action:"candles-prune"}              drop rows older than the 3-month window
+// POST {action:"candles-delete", confirm:true} delete all stored candles
 // GET  ?action=binance&path=/api/v3/klines&q=<query>
 //      fallback proxy for Binance public market data, used only if the
 //      browser can't reach Binance directly. Binance blocks some US servers;
@@ -15,6 +20,7 @@
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
+import { candleStatus, coinCandles, deleteAllCandles, pruneCandles, saveCandles } from '../lib/candles.js';
 
 const TABLE = 'crypto_watchlist';
 const MAX = MAX_COINS;
@@ -22,7 +28,7 @@ const MAX = MAX_COINS;
 // scripts (e.g. 币安人生USDT), so allow any characters except spaces and URL / HTML specials.
 const SYMBOL_RE = /^[^\s"'<>\\/?#&%=+,;:]{1,30}USDT$/u;
 const DEFAULT = DEFAULT_COINS;
-const PROXY_PATHS = new Set(['/api/v3/klines', '/api/v3/ticker/24hr', '/api/v3/ticker/price', '/api/v3/exchangeInfo', '/fapi/v1/klines', '/fapi/v1/ticker/24hr']);
+const PROXY_PATHS = new Set(['/api/v3/klines', '/api/v3/ticker/24hr', '/api/v3/ticker/price', '/api/v3/exchangeInfo', '/fapi/v1/klines', '/fapi/v1/ticker/24hr', '/fapi/v1/exchangeInfo']);
 const HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com'];
 const FUT_HOSTS = ['https://fapi.binance.com'];
 const HISTORY_TABLE = 'crypto_movers_history';
@@ -137,6 +143,17 @@ export default async function handler(req, res) {
         });
         return res.json({ ok: true, ...saved });
       }
+      case 'GET candles-status':
+        return res.json({ ok: true, ...(await candleStatus()) });
+      case 'GET candles':
+        return res.json({ ok: true, symbol: String(req.query?.symbol || ''), candles: await coinCandles(String(req.query?.symbol || '').trim()) });
+      case 'POST candles-save':
+        return res.json({ ok: true, ...(await saveCandles(body.rows)) });
+      case 'POST candles-prune':
+        return res.json({ ok: true, ...(await pruneCandles()) });
+      case 'POST candles-delete':
+        if (body.confirm !== true) throw new HttpError(400, 'Send confirm: true to delete all candle data');
+        return res.json({ ok: true, ...(await deleteAllCandles()) });
       case 'GET binance':
         return res.json({ ok: true, data: await proxy(String(req.query?.path || ''), String(req.query?.q || '')) });
       default:

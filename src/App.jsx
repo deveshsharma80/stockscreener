@@ -6,6 +6,7 @@ import Pnl from './Pnl.jsx';
 import Journal from './Journal.jsx';
 import Crypto from './Crypto.jsx';
 import Movers from './Movers.jsx';
+import CandleData from './CandleData.jsx';
 import FirstHits from './FirstHits.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
@@ -73,11 +74,17 @@ export const SECTIONS = [
     icon: 'rocket',
     tabs: [['history', 'History', 'Past days when a coin closed far above its open, and what happened next']],
   },
+  {
+    id: 'candles',
+    label: 'Candle Data',
+    icon: 'database',
+    tabs: [['hourly', 'Hourly perps', '3 months of hourly candles for every USDT perpetual, with RSI 14 and EMA 5 / 9 / 21']],
+  },
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.
 export const GROUPS = [
   { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper'] },
-  { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'movers'] },
+  { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'movers', 'candles'] },
 ];
 const groupOf = (sectionId) => GROUPS.find((g) => g.sections.includes(sectionId)) || GROUPS[0];
 const GROUPS_KEY = 'stockhits.navGroupsClosed';
@@ -1012,6 +1019,7 @@ function Shell({ auth, onLogout }) {
           {section.id === 'trades' && <Journal subview={tab} />}
           {section.id === 'crypto' && <Crypto subview={tab} actionsEl={actionsEl} />}
           {section.id === 'movers' && <Movers />}
+          {section.id === 'candles' && <CandleData />}
           {section.id === 'paper' && <Pnl subview={tab} />}
         </div>
       </main>
@@ -1132,6 +1140,13 @@ function Icon({ name }) {
       return (
         <svg {...p}>
           <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10" />
+        </svg>
+      );
+    case 'database':
+      return (
+        <svg {...p}>
+          <ellipse cx="12" cy="6" rx="7.5" ry="3" />
+          <path d="M4.5 6v6c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6M4.5 12v6c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3v-6" />
         </svg>
       );
     case 'rocket':

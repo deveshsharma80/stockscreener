@@ -87,8 +87,9 @@ export async function klines(symbol, interval, count = 1000) {
 async function klinesFrom(path, symbol, interval, count) {
   let out = [];
   let endTime;
+  const page = path.startsWith('/fapi/') ? 1500 : 1000; // futures allow 1500 per request
   while (out.length < count) {
-    const limit = Math.min(1000, count - out.length);
+    const limit = Math.min(page, count - out.length);
     const rows = await rest(path, { symbol, interval, limit, ...(endTime ? { endTime } : {}) });
     if (!Array.isArray(rows) || !rows.length) break;
     out = rows.map(toCandle).concat(out);
@@ -96,6 +97,18 @@ async function klinesFrom(path, symbol, interval, count) {
     endTime = rows[0][0] - 1;
   }
   return out;
+}
+
+/** The latest `count` candles of a USDⓈ-M perpetual (always the futures API). */
+export const futuresKlines = (symbol, interval, count) => klinesFrom('/fapi/v1/klines', symbol, interval, count);
+
+/** Every USDT perpetual currently trading on Binance USDⓈ-M Futures. */
+export async function perpSymbols() {
+  const info = await rest('/fapi/v1/exchangeInfo');
+  return (info.symbols || [])
+    .filter((x) => x.contractType === 'PERPETUAL' && x.quoteAsset === 'USDT' && x.status === 'TRADING')
+    .map((x) => x.symbol)
+    .sort();
 }
 
 /** 24-hour stats for some symbols: { BTCUSDT: { price, changePct, quoteVolume, high, low } } */
