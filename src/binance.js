@@ -102,11 +102,15 @@ async function klinesFrom(path, symbol, interval, count) {
 /** The latest `count` candles of a USDⓈ-M perpetual (always the futures API). */
 export const futuresKlines = (symbol, interval, count) => klinesFrom('/fapi/v1/klines', symbol, interval, count);
 
-/** Every USDT perpetual currently trading on Binance USDⓈ-M Futures. */
+/**
+ * Every USDT perpetual currently trading on Binance USDⓈ-M Futures, including TradFi
+ * perpetuals (stocks such as SNDKUSDT, gold XAUUSDT), whose contract type may be
+ * labelled differently from crypto perpetuals — anything ending in PERPETUAL counts.
+ */
 export async function perpSymbols() {
   const info = await rest('/fapi/v1/exchangeInfo');
   return (info.symbols || [])
-    .filter((x) => x.contractType === 'PERPETUAL' && x.quoteAsset === 'USDT' && x.status === 'TRADING')
+    .filter((x) => /PERPETUAL$/.test(x.contractType || '') && x.quoteAsset === 'USDT' && x.status === 'TRADING')
     .map((x) => x.symbol)
     .sort();
 }
