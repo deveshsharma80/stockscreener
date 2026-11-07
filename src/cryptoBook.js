@@ -31,6 +31,7 @@ export function useCryptoBook(secret, { autoload = true } = {}) {
   const [book, setBook] = useState(shared);
   const [error, setError] = useState('');
   const [liquidated, setLiquidated] = useState([]);
+  const [exited, setExited] = useState([]); // stop losses / take profits that fired
 
   useEffect(() => {
     const on = (e) => setBook(e.detail);
@@ -43,6 +44,7 @@ export function useCryptoBook(secret, { autoload = true } = {}) {
     try {
       const j = await call(secret, 'cp-book');
       if (j.liquidated?.length) setLiquidated(j.liquidated);
+      if (j.exited?.length) setExited(j.exited);
       publish(j);
       setError('');
       return j;
@@ -69,5 +71,27 @@ export function useCryptoBook(secret, { autoload = true } = {}) {
     [secret]
   );
 
-  return { book, error, liquidated, clearLiquidated: () => setLiquidated([]), load, post };
+  /** Check liquidation / SL / TP now; the page's prices only fill in coins the server can't price. */
+  const checkNow = useCallback(
+    async (prices) => {
+      const j = await call(secret, 'cp-check-now', { method: 'POST', body: { prices } });
+      if (j.liquidated?.length) setLiquidated(j.liquidated);
+      if (j.exited?.length) setExited(j.exited);
+      publish(j);
+      return j;
+    },
+    [secret]
+  );
+
+  return { book, error, liquidated, clearLiquidated: () => setLiquidated([]), exited, clearExited: () => setExited([]), load, post, checkNow };
+}
+
+/** True if this price has reached a position's liquidation, stop loss or take profit. */
+export function triggerHit(pos, price) {
+  if (!(price > 0) || !pos) return false;
+  const long = pos.qty > 0;
+  if (long ? price <= pos.liqPrice : price >= pos.liqPrice) return true;
+  if (pos.sl != null && (long ? price <= pos.sl : price >= pos.sl)) return true;
+  if (pos.tp != null && (long ? price >= pos.tp : price <= pos.tp)) return true;
+  return false;
 }

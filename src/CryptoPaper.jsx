@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SECRET_KEY, SecretGate, store } from './Ticker.jsx';
 import { fmtPrice, lastPrices, useProxy } from './binance.js';
 import { cryptoApi } from './Crypto.jsx';
-import { useCryptoBook } from './cryptoBook.js';
+import { triggerHit, useCryptoBook } from './cryptoBook.js';
 import CryptoTrade from './CryptoTrade.jsx';
 
 // Crypto paper trading (Binance-Futures style): long / short with 1–10× leverage,
@@ -85,17 +85,26 @@ function Gate({ label, children }) {
 }
 
 function Liquidations({ cb }) {
-  if (!cb.liquidated.length) return null;
   return (
-    <p className="status err cp-notice">
-      Liquidated: {cb.liquidated.map((l) => `${coin(l.symbol)} ${l.side.toLowerCase()} at ${fmtPrice(l.price)}`).join(', ')}. The margin was lost.{' '}
-      <button className="icon-btn" onClick={cb.clearLiquidated} aria-label="Dismiss">×</button>
-    </p>
+    <>
+      {cb.liquidated.length > 0 && (
+        <p className="status err cp-notice">
+          Liquidated: {cb.liquidated.map((l) => `${coin(l.symbol)} ${l.side.toLowerCase()} at ${fmtPrice(l.price)}`).join(', ')}. The margin was lost.{' '}
+          <button className="icon-btn" onClick={cb.clearLiquidated} aria-label="Dismiss">×</button>
+        </p>
+      )}
+      {cb.exited.length > 0 && (
+        <p className="status ok cp-notice">
+          {cb.exited.map((x) => `${x.kind === 'SL' ? 'Stop loss' : 'Take profit'} hit: ${coin(x.symbol)} ${x.side.toLowerCase()} closed at ${fmtPrice(x.price)} (level ${fmtPrice(x.level)})`).join(' · ')}.{' '}
+          <button className="icon-btn" onClick={cb.clearExited} aria-label="Dismiss">×</button>
+        </p>
+      )}
+    </>
   );
 }
 
-/** Live prices for the open positions; asks the server to check when a liquidation price is crossed. */
-function useLivePrices(book, load, extra = []) {
+/** Live prices for the open positions; asks the server to check when a liquidation / SL / TP price is reached. */
+function useLivePrices(book, checkNow, extra = []) {
   const [prices, setPrices] = useState({});
   const syms = [...new Set([...(book?.positions || []).map((p) => p.symbol), ...extra].filter(Boolean))];
   const key = syms.join(',');
@@ -109,10 +118,10 @@ function useLivePrices(book, load, extra = []) {
         const p = await lastPrices(syms).catch(() => ({}));
         if (!alive) return;
         setPrices((x) => ({ ...x, ...p }));
-        const crossed = (book?.positions || []).some((pos) => p[pos.symbol] > 0 && (pos.qty > 0 ? p[pos.symbol] <= pos.liqPrice : p[pos.symbol] >= pos.liqPrice));
+        const crossed = (book?.positions || []).some((pos) => triggerHit(pos, p[pos.symbol]));
         if (crossed && Date.now() - asked.current > 10_000) {
           asked.current = Date.now();
-          load().catch(() => {});
+          checkNow(p).catch(() => {});
         }
       }
       if (alive) timer = setTimeout(tick, POLL_MS);
@@ -202,7 +211,7 @@ function PositionsPage({ secret }) {
   const cb = useCryptoBook(secret);
   const [tradeSym, setTradeSym] = useState(null);
   const [notice, setNotice] = useState(null);
-  const prices = useLivePrices(cb.book, cb.load);
+  const prices = useLivePrices(cb.book, cb.checkNow);
   if (!cb.book) return <p className={cb.error ? 'status err' : 'tk-note'}>{cb.error || 'Loading positions…'}</p>;
   const book = cb.book;
   const inr = useInrStatic(book.fx);
@@ -233,6 +242,7 @@ function PositionsPage({ secret }) {
                   <th className="num">Entry</th>
                   <th className="num">Price</th>
                   <th className="num">Liq. price</th>
+                  <th className="num">SL / TP</th>
                   <th className="num">Margin</th>
                   <th className="num">P&amp;L</th>
                   <th className="num">ROE</th>
@@ -260,6 +270,16 @@ function PositionsPage({ secret }) {
                     <td className="num mono">
                       {fmtPrice(p.liqPrice)}
                       {p.toLiq != null && <div className={`cp-toliq ${Math.abs(p.toLiq) < 3 ? 'near' : ''}`}>{Math.abs(p.toLiq).toFixed(1)}% away</div>}
+                    </td>
+                    <td className="num mono cp-sltp">
+                      {p.sl == null && p.tp == null ? (
+                        <a className="link" href={`#/crypto/chart?s=${p.symbol}`} title="Set stop loss / take profit on the chart">Set on chart</a>
+                      ) : (
+                        <>
+                          <div className="sl">{p.sl != null ? `SL ${fmtPrice(p.sl)}` : '—'}</div>
+                          <div className="tp">{p.tp != null ? `TP ${fmtPrice(p.tp)}` : '—'}</div>
+                        </>
+                      )}
                     </td>
                     <td className="num mono">{inr(p.margin)}</td>
                     <td className={`num mono ${tone(p.upnl)}`}><b>{inr(p.upnl, { signed: true })}</b></td>
@@ -302,7 +322,7 @@ export default function CryptoPaper({ tab }) {
 function PaperPage({ secret, tab }) {
   const cb = useCryptoBook(secret);
   const [notice, setNotice] = useState(null);
-  const prices = useLivePrices(tab === 'account' ? cb.book : null, cb.load);
+  const prices = useLivePrices(tab === 'account' ? cb.book : null, cb.checkNow);
   if (!cb.book) return <p className={cb.error ? 'status err' : 'tk-note'}>{cb.error || 'Loading…'}</p>;
   const book = cb.book;
   return (
@@ -486,6 +506,7 @@ function Reports({ book }) {
                       <div className="tk-sub">
                         <span className={`cp-side ${t.side.toLowerCase()}`}>{t.side === 'LONG' ? 'Long' : 'Short'} {t.leverage}×</span>
                         {t.liquidated && <span className="ind-tag cp-liq">Liquidated</span>}
+                        {t.exitBy && <span className={`ind-tag cp-${t.exitBy.toLowerCase()}`}>{t.exitBy === 'SL' ? 'Stop loss' : 'Take profit'}</span>}
                       </div>
                     </td>
                     <td className="muted-cell">{when(t.openedAt)} → {when(t.closedAt)}</td>
@@ -598,6 +619,7 @@ function Fills({ book }) {
                   <td>
                     <span className={`cp-side ${f.side === 'BUY' ? 'long' : 'short'}`}>{f.side === 'BUY' ? 'Buy' : 'Sell'} {f.leverage}×</span>
                     {f.kind === 'liquidation' && <span className="ind-tag cp-liq">Liquidation</span>}
+                    {(f.kind === 'sl' || f.kind === 'tp') && <span className={`ind-tag cp-${f.kind}`}>{f.kind === 'sl' ? 'Stop loss' : 'Take profit'}</span>}
                   </td>
                   <td className="num mono">{qtyFmt(f.qty)}</td>
                   <td className="num mono">{fmtPrice(f.price)}</td>

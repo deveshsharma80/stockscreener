@@ -22,7 +22,9 @@
 // POST {action:"cp-close", symbol, price?}   close a whole position
 // POST {action:"cp-reset", capitalInr, fx?, closeOpen?}  start a new period with this money (history kept;
 //                                            closeOpen closes open positions at market first)
-// GET  ?action=cp-check                      liquidation check (for a scheduler; accepts CRON_SECRET)
+// POST {action:"cp-exit", symbol, kind:"SL"|"TP", price|null, hint?}   set / clear stop loss or take profit
+// POST {action:"cp-check-now", prices?}      check liquidations / SL / TP now (page prices only fill gaps)
+// GET  ?action=cp-check                      liquidation + SL/TP check (for a scheduler; accepts CRON_SECRET)
 // GET  ?action=binance&path=/api/v3/klines&q=<query>
 //      fallback proxy for Binance public market data, used only if the
 //      browser can't reach Binance directly. Binance blocks some US servers;
@@ -30,7 +32,7 @@
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
-import { checkLiquidations, closePosition, computeBook, placeTrade, resetAccount } from '../lib/cryptopaper.js';
+import { checkLiquidations, closePosition, computeBook, placeTrade, resetAccount, setExit } from '../lib/cryptopaper.js';
 import { candleStatus, coinCandles, deleteAllCandles, deleteHourlyCandles, pruneCandles, saveCandles, scanCandles } from '../lib/candles.js';
 
 const TABLE = 'crypto_watchlist';
@@ -173,9 +175,15 @@ export default async function handler(req, res) {
         if (body.confirm !== true) throw new HttpError(400, 'Send confirm: true to delete the old hourly data');
         return res.json({ ok: true, ...(await deleteHourlyCandles()) });
       case 'GET cp-book': {
-        const check = await checkLiquidations().catch(() => ({ liquidated: [], prices: {} }));
-        return res.json({ ok: true, liquidated: check.liquidated, ...(await computeBook(check.prices)) });
+        const check = await checkLiquidations().catch(() => ({ liquidated: [], exited: [], prices: {} }));
+        return res.json({ ok: true, liquidated: check.liquidated, exited: check.exited, ...(await computeBook(check.prices)) });
       }
+      case 'POST cp-check-now': {
+        const check = await checkLiquidations({ hints: body.prices && typeof body.prices === 'object' ? body.prices : {} });
+        return res.json({ ok: true, liquidated: check.liquidated, exited: check.exited, ...(await computeBook(check.prices)) });
+      }
+      case 'POST cp-exit':
+        return res.json({ ok: true, ...(await setExit({ symbol: String(body.symbol || '').trim(), kind: body.kind, price: body.price, priceHint: body.hint })) });
       case 'GET cp-check':
         return res.json({ ok: true, ...(await checkLiquidations()) });
       case 'POST cp-trade': {

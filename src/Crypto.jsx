@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CandlestickSeries, HistogramSeries, LineSeries, LineStyle, createChart, createSeriesMarkers } from 'lightweight-charts';
 import { SECRET_KEY, SecretGate, store } from './Ticker.jsx';
-import { useCryptoBook } from './cryptoBook.js';
+import { triggerHit, useCryptoBook } from './cryptoBook.js';
 import CryptoTrade from './CryptoTrade.jsx';
 import { INTERVALS, applyKline, fmtCompact, fmtPrice, isFutures, klines, markFutures, stream, tickers, usdtMarkets, useProxy } from './binance.js';
 import { bollinger, crossovers, ema, readings, rsi } from './indicators.js';
@@ -200,6 +200,10 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
           tick={ticks[current]}
           onSymbol={openChart}
           onTrade={() => toggleTrade(current)}
+          position={cb.book?.positions?.find((p) => p.symbol === current) || null}
+          fx={cb.book?.fx || 85}
+          onSetExit={(kind, price, hint) => cb.post('cp-exit', { symbol: current, kind, price, hint })}
+          onPriceHit={(price) => cb.checkNow({ [current]: price }).catch(() => {})}
         />
       )}
       {tradeSym && <CryptoTrade symbol={tradeSym} book={cb.book} post={cb.post} onClose={() => setTradeSym(null)} />}
@@ -450,8 +454,40 @@ const palette = (dark) =>
 const prefersDark = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches;
 const shift = (t) => t + IST_OFFSET; // chart axis in Indian time
 
-function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick, onSymbol, onTrade }) {
+const EXIT_COLORS = { SL: '#dc2626', TP: '#16a34a', ENTRY: '#94a3b8' };
+const EXIT_NAME = { SL: 'Stop loss', TP: 'Take profit' };
+const GRAB_PX = 8; // how close the pointer must be to a line to grab it
+const roundP = (v) => Number(Number(v).toPrecision(6));
+
+function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick, onSymbol, onTrade, position = null, fx = 85, onSetExit, onPriceHit }) {
   const box = useRef(null);
+  const [expanded, setExpanded] = useState(false); // chart panel fills the whole window
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e) => e.key === 'Escape' && !e.defaultPrevented && setExpanded(false);
+    window.addEventListener('keydown', onKey);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = overflow;
+    };
+  }, [expanded]);
+
+  // ---- stop loss / take profit (paper position), drawn and dragged on the chart
+  const [levels, setLevels] = useState({ SL: position?.sl ?? null, TP: position?.tp ?? null });
+  const [exitMsg, setExitMsg] = useState(null);
+  const [savingExit, setSavingExit] = useState('');
+  const levelsRef = useRef(levels);
+  levelsRef.current = levels;
+  const posRef = useRef(position);
+  posRef.current = position;
+  const dragRef = useRef(null);
+  const linesRef = useRef({});
+  useEffect(() => {
+    if (dragRef.current || savingExit) return;
+    setLevels({ SL: position?.sl ?? null, TP: position?.tp ?? null });
+  }, [position?.sl, position?.tp, position?.side]); // eslint-disable-line react-hooks/exhaustive-deps
   const chartRef = useRef(null);
   const sRef = useRef({});
   const candlesRef = useRef([]);
@@ -487,7 +523,29 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
     });
     // Prices span 0.00001 to 100,000 USDT, so each price series formats its own values
     const pf = { priceFormat: { type: 'custom', formatter: (v) => fmtPrice(v), minMove: 0.00000001 } };
-    const candles = chart.addSeries(CandlestickSeries, { ...pf, upColor: p.up, downColor: p.down, wickUpColor: p.up, wickDownColor: p.down, borderVisible: false });
+    const candles = chart.addSeries(CandlestickSeries, {
+      ...pf,
+      upColor: p.up,
+      downColor: p.down,
+      wickUpColor: p.up,
+      wickDownColor: p.down,
+      borderVisible: false,
+      // keep entry / stop loss / take profit in view (mid-drag, use where the drag started)
+      autoscaleInfoProvider: (original) => {
+        const res = original();
+        const pos = posRef.current;
+        if (!res || !pos) return res;
+        const lv = { ...levelsRef.current };
+        if (dragRef.current) lv[dragRef.current.k] = dragRef.current.start;
+        let { minValue, maxValue } = res.priceRange;
+        for (const v of [pos.avg, lv.SL, lv.TP]) {
+          if (v == null) continue;
+          minValue = Math.min(minValue, v);
+          maxValue = Math.max(maxValue, v);
+        }
+        return { ...res, priceRange: { minValue, maxValue } };
+      },
+    });
     candles.priceScale().applyOptions({ scaleMargins: { top: 0.06, bottom: 0.2 } });
     const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
@@ -516,9 +574,11 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
     chartRef.current = chart;
     sRef.current = { candles, volume, fast, slow, bbU, bbM, bbL, markers, rsiS, p };
     if (candlesRef.current.length) draw(true);
+    drawExitLines();
     return () => {
       chart.remove();
       chartRef.current = null;
+      linesRef.current = {}; // the lines belonged to the removed chart
     };
   }, [cfg.rsiOn, dark]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -616,6 +676,159 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
     };
   }, [symbol, interval]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- SL / TP lines
+  const inr = (usdt, signed = true) => {
+    if (usdt == null || !Number.isFinite(usdt)) return '';
+    const v = usdt * fx;
+    const a = Math.abs(v);
+    return `${v < 0 ? '−' : signed && v > 0 ? '+' : ''}₹${a.toLocaleString('en-IN', { maximumFractionDigits: a < 100 ? 2 : 0 })}`;
+  };
+  const pnlAt = (v) => (position && v != null ? (v - position.avg) * position.qty : null);
+  function drawExitLines() {
+    const s = sRef.current.candles;
+    if (!s) return;
+    const pos = posRef.current;
+    const lv = levelsRef.current;
+    const want = { ENTRY: pos ? pos.avg : null, SL: pos ? lv.SL : null, TP: pos ? lv.TP : null };
+    for (const k of ['ENTRY', 'SL', 'TP']) {
+      const v = want[k];
+      const line = linesRef.current[k];
+      if (v == null) {
+        if (line) s.removePriceLine(line);
+        delete linesRef.current[k];
+        continue;
+      }
+      const x = pos && k !== 'ENTRY' ? (v - pos.avg) * pos.qty : null;
+      const opts = {
+        price: v,
+        color: EXIT_COLORS[k],
+        lineWidth: k === 'ENTRY' ? 1 : 2,
+        lineStyle: k === 'ENTRY' ? LineStyle.Dotted : LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: k === 'ENTRY' ? 'Entry' : `${k} ${x == null ? '' : inr(x)}`,
+      };
+      if (line) line.applyOptions(opts);
+      else linesRef.current[k] = s.createPriceLine(opts);
+    }
+  }
+  useEffect(drawExitLines, [levels, position?.avg, position?.qty, fx]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ltpNow = tick?.price ?? candlesRef.current[candlesRef.current.length - 1]?.close ?? null;
+  const saveExit = async (k, v, revertTo) => {
+    setSavingExit(k);
+    setExitMsg(null);
+    try {
+      await onSetExit(k, v, ltpNow);
+      const pos = posRef.current;
+      setExitMsg({
+        kind: 'ok',
+        text:
+          v == null
+            ? `${EXIT_NAME[k]} removed.`
+            : `${EXIT_NAME[k]} at ${fmtPrice(v)}: closes the whole ${pos?.side?.toLowerCase() || 'position'} if the price ${(k === 'SL') === (pos?.qty > 0) ? 'falls' : 'rises'} to it (${inr(pnlAt(v))}).`,
+      });
+    } catch (e) {
+      setLevels((l) => ({ ...l, [k]: revertTo }));
+      setExitMsg({ kind: 'err', text: e.message });
+    } finally {
+      setSavingExit('');
+    }
+  };
+  const saveExitRef = useRef(saveExit);
+  saveExitRef.current = saveExit;
+  // A first level 2 % (stop loss) / 4 % (take profit) from the price, kept inside the liquidation price
+  const addExit = (k) => {
+    const ltp = ltpNow ?? position.avg;
+    const long = position.qty > 0;
+    let v = ltp * (1 + (k === 'SL' ? (long ? -0.02 : 0.02) : long ? 0.04 : -0.04));
+    if (k === 'SL' && (long ? v <= position.liqPrice : v >= position.liqPrice)) v = (ltp + position.liqPrice) / 2;
+    v = roundP(v);
+    setLevels((l) => ({ ...l, [k]: v }));
+    saveExit(k, v, null);
+  };
+
+  // Drag the SL / TP lines
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const s = () => sRef.current.candles;
+    const yOf = (e) => e.clientY - el.getBoundingClientRect().top;
+    const near = (y) => {
+      if (!posRef.current || !s()) return null;
+      let best = null;
+      for (const k of ['SL', 'TP']) {
+        const v = levelsRef.current[k];
+        if (v == null) continue;
+        const ly = s().priceToCoordinate(v);
+        const d = ly == null ? Infinity : Math.abs(ly - y);
+        if (d <= GRAB_PX && (!best || d < best.d)) best = { k, d };
+      }
+      return best?.k || null;
+    };
+    const down = (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      const k = near(yOf(e));
+      if (!k) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragRef.current = { k, start: levelsRef.current[k] };
+      chartRef.current?.applyOptions({ handleScroll: false, handleScale: false });
+      el.classList.add('dragging');
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {}
+    };
+    const move = (e) => {
+      const y = yOf(e);
+      const d = dragRef.current;
+      if (!d) {
+        el.style.cursor = near(y) ? 'ns-resize' : '';
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      const p = s().coordinateToPrice(y);
+      if (p == null || p <= 0) return;
+      const v = roundP(p);
+      if (v === levelsRef.current[d.k]) return;
+      levelsRef.current = { ...levelsRef.current, [d.k]: v };
+      drawExitLines();
+      setLevels(levelsRef.current);
+    };
+    const up = (e) => {
+      const d = dragRef.current;
+      if (!d) return;
+      dragRef.current = null;
+      chartRef.current?.applyOptions({ handleScroll: true, handleScale: true });
+      el.classList.remove('dragging');
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch {}
+      const v = levelsRef.current[d.k];
+      if (v !== d.start) saveExitRef.current(d.k, v, d.start);
+    };
+    el.addEventListener('pointerdown', down, true);
+    el.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+    return () => {
+      el.removeEventListener('pointerdown', down, true);
+      el.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', up, true);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The live price reached SL / TP / liquidation → ask the server to settle it (it checks with its own price)
+  const hitAsked = useRef(0);
+  useEffect(() => {
+    if (!position || !(ltpNow > 0) || dragRef.current) return;
+    if (triggerHit(position, ltpNow) && Date.now() - hitAsked.current > 10_000) {
+      hitAsked.current = Date.now();
+      onPriceHit?.(ltpNow);
+    }
+  }, [ltpNow, position]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Settings changed → redraw
   useEffect(() => {
     if (candlesRef.current.length) draw(true);
@@ -635,7 +848,7 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
   const list = symbols.includes(symbol) ? symbols : [symbol, ...symbols];
 
   return (
-    <section className="card tk-chart crypto-chart">
+    <section className={`card tk-chart crypto-chart ${expanded ? 'expanded' : ''}`}>
       <div className="card-head">
         <div className="tk-chart-title">
           <select className="select crypto-sym" value={symbol} onChange={(e) => onSymbol(e.target.value)} aria-label="Coin">
@@ -646,6 +859,25 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
           {tick?.changePct != null && <span className={`mono ${tone(tick.changePct)}`}>{tick.changePct > 0 ? '+' : ''}{tick.changePct.toFixed(2)}% 24h</span>}
         </div>
         <div className="form-actions">
+          {position && (
+            <span className="tk-holding mono">
+              <span className={`cp-side ${position.side.toLowerCase()}`}>{position.side === 'LONG' ? 'Long' : 'Short'} {position.leverage}×</span>{' '}
+              {Math.abs(position.qty).toLocaleString('en-US', { maximumSignificantDigits: 8 })} @ {fmtPrice(position.avg)}
+            </span>
+          )}
+          {position &&
+            (() => {
+              const pnl = ltpNow != null ? (ltpNow - position.avg) * position.qty : null;
+              const roe = pnl != null ? (pnl / position.margin) * 100 : null;
+              const cls = pnl > 0 ? 'up' : pnl < 0 ? 'down' : 'flat';
+              return (
+                <span className={`tk-chart-pnl ${cls}`} title={`Running P&L before fees · ROE on ${inr(position.margin, false)} margin`}>
+                  <span className="lbl">P&amp;L</span>
+                  <b className="mono">{pnl != null ? inr(pnl) : '…'}</b>
+                  {roe != null && <span className="mono pct">{roe > 0 ? '+' : ''}{roe.toFixed(2)}%</span>}
+                </span>
+              );
+            })()}
           <button className="btn tk-trade-btn" onClick={onTrade} title={`Paper trade ${coin(symbol)}`}>Trade</button>
           <span className={`crypto-live ${live}`}>{live === 'live' ? '● Live' : live === 'down' ? 'Refreshing every 10 s' : 'Connecting…'}</span>
           <div className="seg" role="group" aria-label="Candle interval">
@@ -653,8 +885,48 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
               <button key={v} className={interval === v ? 'on' : ''} onClick={() => setInterval(v)}>{v === '1h' ? '1 hour' : '1 day'}</button>
             ))}
           </div>
+          <button
+            className="btn tk-expand-btn"
+            onClick={() => setExpanded((v) => !v)}
+            aria-pressed={expanded}
+            aria-label={expanded ? 'Exit full screen' : 'Expand chart to full screen'}
+            title={expanded ? 'Exit full screen (Esc)' : 'Expand chart to full screen'}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {expanded ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /> : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
+            </svg>
+          </button>
         </div>
       </div>
+
+      {position && onSetExit && (
+        <div className="tk-exit-bar">
+          {['SL', 'TP'].map((k) => (
+            <CExitChip
+              key={k}
+              k={k}
+              value={levels[k]}
+              pnl={inr(pnlAt(levels[k]))}
+              busy={savingExit === k}
+              onAdd={() => addExit(k)}
+              onSet={(v) => {
+                const before = levels[k];
+                setLevels((l) => ({ ...l, [k]: v }));
+                saveExit(k, v, before);
+              }}
+              onRemove={() => {
+                const before = levels[k];
+                setLevels((l) => ({ ...l, [k]: null }));
+                saveExit(k, null, before);
+              }}
+            />
+          ))}
+          <span className="tk-exit-hint">
+            {levels.SL != null || levels.TP != null ? 'Drag the dashed lines on the chart to move them.' : 'Add a level, then drag its line on the chart.'} Liq. {fmtPrice(position.liqPrice)}
+          </span>
+          {exitMsg && <span className={`status ${exitMsg.kind}`}>{exitMsg.text}</span>}
+        </div>
+      )}
 
       <div className="tk-ema-bar ind-bar">
         <IndGroup on={cfg.emaOn} onToggle={(v) => setCfg({ emaOn: v })} label="EMA" swatches={['fast', 'slow']}>
@@ -709,6 +981,45 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
         </span>
       </div>
     </section>
+  );
+}
+
+/** "+ Stop loss" button, or the level with an editable price and a remove button. */
+function CExitChip({ k, value, pnl, busy, onAdd, onSet, onRemove }) {
+  const [draft, setDraft] = useState(null);
+  if (value == null) {
+    return (
+      <button className={`btn exit-add ${k}`} onClick={onAdd} disabled={busy}>
+        + {EXIT_NAME[k]}
+      </button>
+    );
+  }
+  const commit = () => {
+    if (draft == null) return;
+    const v = roundP(Number(draft));
+    setDraft(null);
+    if (v > 0 && v !== value) onSet(v);
+  };
+  return (
+    <span className={`exit-chip ${k}`}>
+      <b>{k}</b>
+      <input
+        type="number"
+        step="any"
+        min="0"
+        value={draft ?? String(value)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') setDraft(null);
+        }}
+        aria-label={`${EXIT_NAME[k]} price`}
+        disabled={busy}
+      />
+      <span className={`mono exit-pnl ${pnl.startsWith('+') ? 'pos' : 'neg'}`}>{busy ? 'saving…' : pnl}</span>
+      <button className="exit-x" onClick={onRemove} disabled={busy} aria-label={`Remove ${EXIT_NAME[k]}`} title={`Remove ${EXIT_NAME[k]}`}>×</button>
+    </span>
   );
 }
 
