@@ -1,7 +1,7 @@
 // /api/crypto — Crypto pages (Binance spot). Webhook secret required.
 //
 // GET  ?action=watchlist                      your coins
-// POST {action:"add", symbol:"BTCUSDT"}       add a coin (USDT pair)
+// POST {action:"add", symbol:"BTCUSDT", market?:"futures"}  add a coin (USDT pair; "futures" = perpetual only, no spot pair)
 // POST {action:"remove", symbol:"BTCUSDT"}
 // GET  ?action=scan&minPct=40                 daily mover scan: every USDT pair whose daily
 //      candle is up ≥ minPct % gets added to the watchlist (for a scheduler, every 15 min)
@@ -22,8 +22,9 @@ const MAX = MAX_COINS;
 // scripts (e.g. 币安人生USDT), so allow any characters except spaces and URL / HTML specials.
 const SYMBOL_RE = /^[^\s"'<>\\/?#&%=+,;:]{1,30}USDT$/u;
 const DEFAULT = DEFAULT_COINS;
-const PROXY_PATHS = new Set(['/api/v3/klines', '/api/v3/ticker/24hr', '/api/v3/ticker/price', '/api/v3/exchangeInfo']);
+const PROXY_PATHS = new Set(['/api/v3/klines', '/api/v3/ticker/24hr', '/api/v3/ticker/price', '/api/v3/exchangeInfo', '/fapi/v1/klines', '/fapi/v1/ticker/24hr']);
 const HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com'];
+const FUT_HOSTS = ['https://fapi.binance.com'];
 const HISTORY_TABLE = 'crypto_movers_history';
 const MAX_HISTORY_ROWS = 10000;
 const num = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
@@ -102,15 +103,16 @@ export default async function handler(req, res) {
       case 'POST add': {
         const symbol = String(body.symbol || '').trim();
         if (!SYMBOL_RE.test(symbol)) throw new HttpError(400, 'Pick a USDT pair, e.g. BTCUSDT');
-        const symbols = await updateTable(TABLE, (rows) => {
+        const futures = body.market === 'futures';
+        const items = await updateTable(TABLE, (rows) => {
           if (!rows.length) rows.push(...DEFAULT.map((s) => ({ symbol: s, addedAt: new Date().toISOString() })));
           if (!rows.some((r) => r.symbol === symbol)) {
             if (rows.length >= MAX) throw new HttpError(400, `At most ${MAX} coins`);
-            rows.push({ symbol, addedAt: new Date().toISOString() });
+            rows.push({ symbol, addedAt: new Date().toISOString(), ...(futures ? { market: 'futures' } : {}) });
           }
-          return rows.map((r) => r.symbol);
+          return rows.slice();
         });
-        return res.json({ ok: true, symbols });
+        return res.json({ ok: true, symbols: items.map((r) => r.symbol), items });
       }
       case 'POST remove': {
         const symbol = String(body.symbol || '').trim().toUpperCase();
@@ -119,9 +121,9 @@ export default async function handler(req, res) {
           const keep = rows.filter((r) => r.symbol !== symbol);
           rows.length = 0;
           rows.push(...keep);
-          return rows.map((r) => r.symbol);
+          return rows.slice();
         });
-        return res.json({ ok: true, symbols });
+        return res.json({ ok: true, symbols: symbols.map((r) => r.symbol), items: symbols });
       }
       case 'GET movers-history': {
         const [saved] = await readTable(HISTORY_TABLE).catch(() => []);
@@ -153,7 +155,7 @@ async function watchlist() {
 async function proxy(path, q) {
   if (!PROXY_PATHS.has(path)) throw new HttpError(400, 'Not an allowed Binance endpoint');
   let last = '';
-  for (const host of HOSTS) {
+  for (const host of path.startsWith('/fapi/') ? FUT_HOSTS : HOSTS) {
     try {
       const r = await fetch(`${host}${path}?${q}`, { headers: { accept: 'application/json' } });
       if (r.ok) return await r.json();

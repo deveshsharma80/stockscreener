@@ -1066,3 +1066,6 @@ table.lp-table th:first-child, table.lp-table td:first-child { padding-left: 18p
 .tk-chart-pnl.up { color: var(--pos); background: color-mix(in srgb, var(--pos) 12%, transparent); border-color: color-mix(in srgb, var(--pos) 35%, var(--border)); }
 .tk-chart-pnl.down { color: #ef4444; background: color-mix(in srgb, #ef4444 12%, transparent); border-color: color-mix(in srgb, #ef4444 35%, var(--border)); }
 .tk-chart-pnl.flat { color: #f59e0b; }
+
+/* Crypto: futures-only (perpetual) coins */
+.ind-tag.perp { color: #a78bfa; background: color-mix(in srgb, #a78bfa 14%, transparent); border-color: color-mix(in srgb, #a78bfa 35%, transparent); }

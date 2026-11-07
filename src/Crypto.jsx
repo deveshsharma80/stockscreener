@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CandlestickSeries, HistogramSeries, LineSeries, LineStyle, createChart, createSeriesMarkers } from 'lightweight-charts';
 import { SECRET_KEY, SecretGate, store } from './Ticker.jsx';
-import { INTERVALS, applyKline, fmtCompact, fmtPrice, klines, stream, tickers, usdtMarkets, useProxy } from './binance.js';
+import { INTERVALS, applyKline, fmtCompact, fmtPrice, isFutures, klines, markFutures, stream, tickers, usdtMarkets, useProxy } from './binance.js';
 import { bollinger, crossovers, ema, readings, rsi } from './indicators.js';
 import { IST_OFFSET } from './candles.js';
 
@@ -28,6 +28,8 @@ function readCfg() {
 const readInterval = () => (store.get(INT_KEY) === '1d' ? '1d' : '1h');
 const symbolFromHash = () => (window.location.hash.split('?')[1] || '').match(/(?:^|&)s=([A-Z0-9]+)/)?.[1] || '';
 const coin = (s) => s.replace(/USDT$/, '');
+/** Futures-only coin (USDⓈ-M perpetual, no spot pair): prices and candles come from Binance Futures */
+const PerpTag = () => <span className="ind-tag perp" title="Binance USDⓈ-M perpetual (no spot pair): prices and candles from Binance Futures">Perp</span>;
 const tone = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
 
 export async function cryptoApi(secret, action, { method = 'GET', body } = {}) {
@@ -72,6 +74,7 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
   const load = useCallback(async (s) => {
     try {
       const j = await api(s, 'watchlist');
+      markFutures((j.items || []).filter((r) => r.market === 'futures').map((r) => r.symbol)); // before prices load
       setSymbols(j.symbols);
       setNotes(Object.fromEntries((j.items || []).filter((r) => r.addedBy).map((r) => [r.symbol, r])));
       setUnlocked(true);
@@ -148,8 +151,9 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
     );
   }
 
-  const changeList = async (action, symbol) => {
-    const j = await api(secret, action, { method: 'POST', body: { symbol } });
+  const changeList = async (action, symbol, market) => {
+    const j = await api(secret, action, { method: 'POST', body: { symbol, ...(market === 'futures' ? { market } : {}) } });
+    markFutures((j.items || []).filter((r) => r.market === 'futures').map((r) => r.symbol));
     setSymbols(j.symbols);
   };
   const openChart = (s) => {
@@ -176,7 +180,7 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
         )}
       {subview === 'watchlist' ? (
         <>
-          <Watchlist symbols={symbols} notes={notes} ticks={ticks} interval={interval} cfg={cfg} onAdd={(s) => changeList('add', s)} onRemove={(s) => changeList('remove', s)} onChart={openChart} />
+          <Watchlist symbols={symbols} notes={notes} ticks={ticks} interval={interval} cfg={cfg} onAdd={(s, market) => changeList('add', s, market)} onRemove={(s) => changeList('remove', s)} onChart={openChart} />
           <ScanPanel secret={secret} onListChanged={() => load(secret)} />
         </>
       ) : (
@@ -273,7 +277,7 @@ function Watchlist({ symbols, notes = {}, ticks, interval, cfg, onAdd, onRemove,
     <section className="card">
       <div className="card-head">
         <h2>Coins</h2>
-        <AddCoin existing={symbols} onAdd={(s) => act(onAdd, s, `${coin(s)} added.`)} />
+        <AddCoin existing={symbols} onAdd={(s, market) => act((x) => onAdd(x, market), s, `${coin(s)} added${market === 'futures' ? ' (futures)' : ''}.`)} />
       </div>
       {msg && <p className={`status ${msg.startsWith('⚠') ? 'err' : 'ok'} tk-pos-msg`}>{msg}</p>}
       {scanErr && <p className="status err tk-pos-msg">Indicator data: {scanErr}</p>}
@@ -299,6 +303,7 @@ function Watchlist({ symbols, notes = {}, ticks, interval, cfg, onAdd, onRemove,
                   <div className="tk-name">{coin(s)}</div>
                   <div className="tk-sub">
                     <span>{s}</span>
+                    {isFutures(s) && <PerpTag />}
                     {notes[s]?.addedBy === 'scan' && <span className="ind-tag new" title={`Added by the daily mover scan: ${notes[s].note || ''}`}>Auto {(notes[s].note || '').split(' ')[0]}</span>}
                   </div>
                 </td>
@@ -376,10 +381,10 @@ function AddCoin({ existing, onAdd }) {
   }, [open, list]);
   const term = q.trim().toUpperCase().replace(/USDT$/, '');
   const matches = (list || []).filter((m) => !term || m.base.startsWith(term) || m.symbol.startsWith(term)).slice(0, 12);
-  const pick = (s) => {
+  const pick = (m) => {
     setQ('');
     setOpen(false);
-    if (!existing.includes(s)) onAdd(s);
+    if (!existing.includes(m.symbol)) onAdd(m.symbol, m.market);
   };
   return (
     <div className="tk-add crypto-add">
@@ -390,17 +395,17 @@ function AddCoin({ existing, onAdd }) {
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onChange={(e) => (setQ(e.target.value), setOpen(true))}
-        onKeyDown={(e) => e.key === 'Enter' && matches[0] && pick(matches[0].symbol)}
+        onKeyDown={(e) => e.key === 'Enter' && matches[0] && pick(matches[0])}
         aria-label="Add coin"
       />
       {open && (
         <div className="tk-results">
           {err && <div className="tk-result-note">{err}</div>}
           {!list && !err && <div className="tk-result-note">Loading Binance markets…</div>}
-          {list && !matches.length && <div className="tk-result-note">No USDT pair matches “{q}”.</div>}
+          {list && !matches.length && <div className="tk-result-note">No USDT pair or perpetual matches “{q}”.</div>}
           {matches.map((m) => (
-            <button key={m.symbol} className="tk-result" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(m.symbol)} disabled={existing.includes(m.symbol)}>
-              <span className="mono"><b>{m.base}</b>/USDT</span>
+            <button key={m.symbol} className="tk-result" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(m)} disabled={existing.includes(m.symbol)}>
+              <span className="mono"><b>{m.base}</b>/USDT {m.market === 'futures' && <PerpTag />}</span>
               <span className="mono muted-cell">{fmtPrice(m.price)}</span>
               <span className="muted-cell">vol {fmtCompact(m.quoteVolume)}</span>
               {existing.includes(m.symbol) && <span className="muted-cell">added</span>}
@@ -610,8 +615,9 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
       <div className="card-head">
         <div className="tk-chart-title">
           <select className="select crypto-sym" value={symbol} onChange={(e) => onSymbol(e.target.value)} aria-label="Coin">
-            {list.map((s) => <option key={s} value={s}>{coin(s)}/USDT</option>)}
+            {list.map((s) => <option key={s} value={s}>{coin(s)}/USDT{isFutures(s) ? ' · Perp' : ''}</option>)}
           </select>
+          {isFutures(symbol) && <PerpTag />}
           <b className="mono tk-chart-ltp">{fmtPrice(tick?.price ?? cs[cs.length - 1]?.close)}</b>
           {tick?.changePct != null && <span className={`mono ${tone(tick.changePct)}`}>{tick.changePct > 0 ? '+' : ''}{tick.changePct.toFixed(2)}% 24h</span>}
         </div>
