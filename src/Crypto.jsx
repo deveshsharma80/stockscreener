@@ -622,6 +622,7 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
           {tick?.changePct != null && <span className={`mono ${tone(tick.changePct)}`}>{tick.changePct > 0 ? '+' : ''}{tick.changePct.toFixed(2)}% 24h</span>}
         </div>
         <div className="form-actions">
+          <a className="btn tk-trade-btn cp-chart-trade" href={`#/cpaper/overview?s=${symbol}`} title={`Paper trade ${coin(symbol)}`}>Trade</a>
           <span className={`crypto-live ${live}`}>{live === 'live' ? '● Live' : live === 'down' ? 'Refreshing every 10 s' : 'Connecting…'}</span>
           <div className="seg" role="group" aria-label="Candle interval">
             {['1h', '1d'].map((v) => (

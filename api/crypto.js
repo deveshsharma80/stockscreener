@@ -16,6 +16,12 @@
 // POST {action:"candles-prune"}              drop rows older than the 3-month window
 // POST {action:"candles-delete", confirm:true} delete all stored candles
 // POST {action:"candles-delete-hourly", confirm:true} delete the old hourly table (candles_1h)
+// Paper trading (futures style, amounts in ₹ at a fixed rate; see lib/cryptopaper.js):
+// GET  ?action=cp-book                       account, open positions, fills, closed trades (checks liquidations first)
+// POST {action:"cp-trade", symbol, side:"BUY"|"SELL", qty, leverage, price?}   market order (qty in coins)
+// POST {action:"cp-close", symbol, price?}   close a whole position
+// POST {action:"cp-reset", capitalInr, fx?}  start a new period with this money (history kept)
+// GET  ?action=cp-check                      liquidation check (for a scheduler; accepts CRON_SECRET)
 // GET  ?action=binance&path=/api/v3/klines&q=<query>
 //      fallback proxy for Binance public market data, used only if the
 //      browser can't reach Binance directly. Binance blocks some US servers;
@@ -23,6 +29,7 @@
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
+import { checkLiquidations, closePosition, computeBook, placeTrade, resetAccount } from '../lib/cryptopaper.js';
 import { candleStatus, coinCandles, deleteAllCandles, deleteHourlyCandles, pruneCandles, saveCandles, scanCandles } from '../lib/candles.js';
 
 const TABLE = 'crypto_watchlist';
@@ -31,7 +38,7 @@ const MAX = MAX_COINS;
 // scripts (e.g. 币安人生USDT), so allow any characters except spaces and URL / HTML specials.
 const SYMBOL_RE = /^[^\s"'<>\\/?#&%=+,;:]{1,30}USDT$/u;
 const DEFAULT = DEFAULT_COINS;
-const PROXY_PATHS = new Set(['/api/v3/klines', '/api/v3/ticker/24hr', '/api/v3/ticker/price', '/api/v3/exchangeInfo', '/fapi/v1/klines', '/fapi/v1/ticker/24hr', '/fapi/v1/exchangeInfo']);
+const PROXY_PATHS = new Set(['/api/v3/klines', '/api/v3/ticker/24hr', '/api/v3/ticker/price', '/api/v3/exchangeInfo', '/fapi/v1/klines', '/fapi/v1/ticker/24hr', '/fapi/v1/exchangeInfo', '/fapi/v1/ticker/price']);
 const HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com'];
 const FUT_HOSTS = ['https://fapi.binance.com'];
 const HISTORY_TABLE = 'crypto_movers_history';
@@ -93,7 +100,7 @@ export default async function handler(req, res) {
     }
     const body = req.method === 'POST' ? parseBody(req) || {} : {};
     const action = req.method === 'POST' ? body.action : req.query?.action;
-    checkSecret(req, { cron: action === 'scan' }); // the daily scan may use CRON_SECRET
+    checkSecret(req, { cron: action === 'scan' || action === 'cp-check' }); // scheduler jobs may use CRON_SECRET
 
     switch (`${req.method} ${action}`) {
       case 'GET watchlist': {
@@ -164,6 +171,22 @@ export default async function handler(req, res) {
       case 'POST candles-delete-hourly':
         if (body.confirm !== true) throw new HttpError(400, 'Send confirm: true to delete the old hourly data');
         return res.json({ ok: true, ...(await deleteHourlyCandles()) });
+      case 'GET cp-book': {
+        const check = await checkLiquidations().catch(() => ({ liquidated: [], prices: {} }));
+        return res.json({ ok: true, liquidated: check.liquidated, ...(await computeBook(check.prices)) });
+      }
+      case 'GET cp-check':
+        return res.json({ ok: true, ...(await checkLiquidations()) });
+      case 'POST cp-trade': {
+        const r = await placeTrade({ symbol: body.symbol, side: body.side, qty: body.qty, leverage: body.leverage, priceHint: body.price });
+        return res.json({ ok: true, fill: r.fill, ...r.book });
+      }
+      case 'POST cp-close': {
+        const r = await closePosition(String(body.symbol || '').trim(), body.price);
+        return res.json({ ok: true, fill: r.fill, ...r.book });
+      }
+      case 'POST cp-reset':
+        return res.json({ ok: true, ...(await resetAccount({ capitalInr: body.capitalInr, fx: body.fx })) });
       case 'GET binance':
         return res.json({ ok: true, data: await proxy(String(req.query?.path || ''), String(req.query?.q || '')) });
       default:

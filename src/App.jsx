@@ -7,6 +7,7 @@ import Journal from './Journal.jsx';
 import Crypto from './Crypto.jsx';
 import Movers from './Movers.jsx';
 import CandleData from './CandleData.jsx';
+import CryptoPaper from './CryptoPaper.jsx';
 import FirstHits from './FirstHits.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
@@ -75,6 +76,16 @@ export const SECTIONS = [
     tabs: [['history', 'History', 'Past days when a coin closed far above its open, and what happened next']],
   },
   {
+    id: 'cpaper',
+    label: 'Paper Trading',
+    icon: 'wallet',
+    tabs: [
+      ['overview', 'Positions', 'Paper trade crypto like Binance Futures: long or short, 1–10× leverage, money in ₹'],
+      ['reports', 'Reports', 'Booked P&L, win rate, by coin and by day'],
+      ['fills', 'Fills', 'Every paper order and liquidation'],
+    ],
+  },
+  {
     id: 'candles',
     label: 'Candle Data',
     icon: 'database',
@@ -84,7 +95,7 @@ export const SECTIONS = [
 // Left-menu parent groups (markets). Each section belongs to one group.
 export const GROUPS = [
   { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper'] },
-  { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'movers', 'candles'] },
+  { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'cpaper', 'movers', 'candles'] },
 ];
 const groupOf = (sectionId) => GROUPS.find((g) => g.sections.includes(sectionId)) || GROUPS[0];
 const GROUPS_KEY = 'stockhits.navGroupsClosed';
@@ -1020,6 +1031,7 @@ function Shell({ auth, onLogout }) {
           {section.id === 'crypto' && <Crypto subview={tab} actionsEl={actionsEl} />}
           {section.id === 'movers' && <Movers />}
           {section.id === 'candles' && <CandleData />}
+          {section.id === 'cpaper' && <CryptoPaper tab={tab} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
         </div>
       </main>

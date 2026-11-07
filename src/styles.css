@@ -1105,3 +1105,58 @@ table.lp-table th:first-child, table.lp-table td:first-child { padding-left: 18p
 td.cd-hit { background: color-mix(in srgb, var(--accent) 7%, transparent); font-weight: 700; }
 .status.cd-legacy { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; padding: 10px 18px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
 td.cd-span { white-space: nowrap; }
+
+/* Crypto paper trading */
+.cp-stats { grid-template-columns: repeat(5, 1fr); }
+.stat-value.pos { color: var(--pos); }
+.stat-value.neg { color: #ef4444; }
+.cp-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cp-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.cp-ticket-body { padding: 14px 18px 16px; display: grid; gap: 12px; }
+.cp-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cp-sym { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.cp-sym input { width: 120px; font: inherit; font-family: var(--mono); font-size: 16px; font-weight: 700; text-transform: uppercase; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.cp-price { display: grid; text-align: right; }
+.cp-price b { font-size: 20px; }
+.cp-side-seg { display: grid; grid-template-columns: 1fr 1fr; }
+.cp-side-seg button { padding: 9px 0; font-weight: 700; }
+.cp-side-seg button.on.buy { background: var(--pos); border-color: var(--pos); color: #fff; }
+.cp-side-seg button.on.sell { background: #ef4444; border-color: #ef4444; color: #fff; }
+.cp-lev { display: grid; gap: 6px; font-size: 14px; }
+.cp-lev input { width: 100%; accent-color: var(--accent); }
+.cp-amt { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; font-weight: 600; }
+.cp-amt-in { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); }
+.cp-amt-in input { width: 130px; border: 0; background: transparent; color: var(--text); font: inherit; font-family: var(--mono); font-size: 15px; padding: 8px 0; text-align: right; outline: none; }
+.cp-amt-in:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cp-chip { font: inherit; font-size: 12.5px; font-weight: 600; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+.cp-chip:hover { background: var(--surface-2); }
+.cp-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.cp-facts { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; margin: 0; font-size: 13.5px; }
+.cp-facts dt { color: var(--muted); }
+.cp-facts dd { margin: 0; text-align: right; }
+.btn.cp-go { padding: 11px 0; font-size: 15px; font-weight: 700; color: #fff; border-color: transparent; }
+.btn.cp-go.buy { background: var(--pos); }
+.btn.cp-go.sell { background: #ef4444; }
+.btn.cp-go:disabled { opacity: 0.5; }
+.cp-small { margin: 0; font-size: 12.5px; }
+.cp-side { font-size: 12px; font-weight: 700; }
+.cp-side.long { color: var(--pos); }
+.cp-side.short { color: #ef4444; }
+.cp-toliq { font-size: 11.5px; color: var(--muted); }
+.cp-toliq.near { color: #ef4444; font-weight: 700; }
+.ind-tag.cp-liq { color: #ef4444; background: color-mix(in srgb, #ef4444 14%, transparent); }
+.cp-link { all: unset; cursor: pointer; font-weight: 700; color: var(--accent); }
+.cp-link:hover { text-decoration: underline; }
+.cp-link:focus-visible { outline: 2px solid var(--accent); }
+.cp-curve svg { display: block; width: 100%; height: 160px; padding: 0 12px 12px; box-sizing: border-box; }
+.cp-zero { stroke: var(--border); stroke-dasharray: 4 4; }
+.cp-line { fill: none; stroke-width: 2; }
+.cp-line.up { stroke: var(--pos); }
+.cp-line.down { stroke: #ef4444; }
+@media (max-width: 900px) {
+  .cp-stats { grid-template-columns: repeat(2, 1fr); }
+  .cp-grid { grid-template-columns: 1fr; }
+}
+a.btn.cp-chart-trade { text-decoration: none; display: inline-flex; align-items: center; }
+.cp-table th { font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; }
