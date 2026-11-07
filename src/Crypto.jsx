@@ -194,7 +194,7 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
           symbol={current}
           symbols={symbols}
           interval={interval}
-          setInterval={setIntervalV}
+          onInterval={setIntervalV}
           cfg={cfg}
           setCfg={setCfg}
           tick={ticks[current]}
@@ -459,7 +459,7 @@ const EXIT_NAME = { SL: 'Stop loss', TP: 'Take profit' };
 const GRAB_PX = 8; // how close the pointer must be to a line to grab it
 const roundP = (v) => Number(Number(v).toPrecision(6));
 
-function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick, onSymbol, onTrade, position = null, fx = 85, onSetExit, onPriceHit }) {
+function CryptoChart({ symbol, symbols, interval, onInterval, cfg, setCfg, tick, onSymbol, onTrade, position = null, fx = 85, onSetExit, onPriceHit }) {
   const box = useRef(null);
   const [expanded, setExpanded] = useState(false); // chart panel fills the whole window
   useEffect(() => {
@@ -882,7 +882,7 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
           <span className={`crypto-live ${live}`}>{live === 'live' ? '● Live' : live === 'down' ? 'Refreshing every 10 s' : 'Connecting…'}</span>
           <div className="seg" role="group" aria-label="Candle interval">
             {['1h', '1d'].map((v) => (
-              <button key={v} className={interval === v ? 'on' : ''} onClick={() => setInterval(v)}>{v === '1h' ? '1 hour' : '1 day'}</button>
+              <button key={v} className={interval === v ? 'on' : ''} onClick={() => onInterval(v)}>{v === '1h' ? '1 hour' : '1 day'}</button>
             ))}
           </div>
           <button

@@ -214,20 +214,34 @@ function connect(streams, hosts, onMessage, onStatus) {
   let closed = false;
   let attempt = 0;
   let timer = null;
+  let silence = null;
+  const SILENT_MS = 12_000; // open but no data this long → treat as not working
   const open = () => {
     if (closed || !streams.length) return;
     const host = hosts[attempt % hosts.length];
-    onStatus(attempt === 0 ? 'connecting' : attempt > 3 ? 'down' : 'connecting');
+    onStatus(attempt >= 1 ? 'down' : 'connecting');
     try {
       ws = new WebSocket(`${host}/stream?streams=${streams.join('/')}`);
     } catch {
       return retry();
     }
+    const sock = ws;
     let gotData = false;
-    ws.onmessage = (e) => {
+    // A socket can connect and then never send anything (e.g. a retired or blocked route):
+    // give up on it after SILENT_MS so the page falls back to polling instead of "Connecting…" forever.
+    clearTimeout(silence);
+    silence = setTimeout(() => {
+      if (!gotData && !closed) {
+        try {
+          sock.close();
+        } catch {}
+      }
+    }, SILENT_MS);
+    sock.onmessage = (e) => {
       if (!gotData) {
         gotData = true;
         attempt = 0;
+        clearTimeout(silence);
         onStatus('live');
       }
       try {
@@ -235,20 +249,24 @@ function connect(streams, hosts, onMessage, onStatus) {
         if (m?.data) onMessage(m.data);
       } catch {}
     };
-    ws.onerror = () => {};
-    ws.onclose = () => {
-      if (!closed) retry();
+    sock.onerror = () => {};
+    sock.onclose = () => {
+      clearTimeout(silence);
+      if (!closed && sock === ws) retry();
     };
   };
   const retry = () => {
     attempt++;
-    onStatus(attempt > 3 ? 'down' : 'connecting');
-    timer = setTimeout(open, Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5)));
+    // after one failed try report "down" (pages then poll Binance's REST API) but keep trying in the background
+    onStatus(attempt >= 1 ? 'down' : 'connecting');
+    clearTimeout(timer);
+    timer = setTimeout(open, Math.min(60_000, 1000 * 2 ** Math.min(attempt, 6)));
   };
   open();
   return () => {
     closed = true;
     clearTimeout(timer);
+    clearTimeout(silence);
     try {
       ws?.close();
     } catch {}
