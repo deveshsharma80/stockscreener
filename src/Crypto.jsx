@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CandlestickSeries, HistogramSeries, LineSeries, LineStyle, createChart, createSeriesMarkers } from 'lightweight-charts';
 import { SECRET_KEY, SecretGate, store } from './Ticker.jsx';
+import { useCryptoBook } from './cryptoBook.js';
+import CryptoTrade from './CryptoTrade.jsx';
 import { INTERVALS, applyKline, fmtCompact, fmtPrice, isFutures, klines, markFutures, stream, tickers, usdtMarkets, useProxy } from './binance.js';
 import { bollinger, crossovers, ema, readings, rsi } from './indicators.js';
 import { IST_OFFSET } from './candles.js';
@@ -59,6 +61,9 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
   const [interval, setIntervalState] = useState(readInterval);
   const [cfg, setCfgState] = useState(readCfg);
   const [chartSym, setChartSym] = useState(symbolFromHash);
+  const cb = useCryptoBook(unlocked ? secret : '', { autoload: true }); // paper-trading book for the Trade popup
+  const [tradeSym, setTradeSym] = useState(null);
+  const toggleTrade = (s) => setTradeSym((x) => (x === s ? null : s));
 
   const setIntervalV = (v) => {
     setIntervalState(v);
@@ -180,7 +185,7 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
         )}
       {subview === 'watchlist' ? (
         <>
-          <Watchlist symbols={symbols} notes={notes} ticks={ticks} interval={interval} cfg={cfg} onAdd={(s, market) => changeList('add', s, market)} onRemove={(s) => changeList('remove', s)} onChart={openChart} />
+          <Watchlist symbols={symbols} notes={notes} ticks={ticks} interval={interval} cfg={cfg} onAdd={(s, market) => changeList('add', s, market)} onRemove={(s) => changeList('remove', s)} onChart={openChart} onTrade={toggleTrade} tradeSym={tradeSym} positions={cb.book?.positions || []} />
           <ScanPanel secret={secret} onListChanged={() => load(secret)} />
         </>
       ) : (
@@ -194,15 +199,18 @@ export default function Crypto({ subview = 'watchlist', actionsEl = null }) {
           setCfg={setCfg}
           tick={ticks[current]}
           onSymbol={openChart}
+          onTrade={() => toggleTrade(current)}
         />
       )}
+      {tradeSym && <CryptoTrade symbol={tradeSym} book={cb.book} post={cb.post} onClose={() => setTradeSym(null)} />}
     </>
   );
 }
 
 // ------------------------------------------------------------------ watchlist
 
-function Watchlist({ symbols, notes = {}, ticks, interval, cfg, onAdd, onRemove, onChart }) {
+function Watchlist({ symbols, notes = {}, ticks, interval, cfg, onAdd, onRemove, onChart, onTrade, tradeSym, positions = [] }) {
+  const posOf = Object.fromEntries(positions.map((p) => [p.symbol, p]));
   const [candles, setCandles] = useState({}); // symbol -> candles for the readings
   const [scanAt, setScanAt] = useState(null);
   const [scanErr, setScanErr] = useState('');
@@ -292,6 +300,7 @@ function Watchlist({ symbols, notes = {}, ticks, interval, cfg, onAdd, onRemove,
               <th className="num" title={`RSI ${cfg.rsi} on ${per} candles`}>RSI {cfg.rsi}</th>
               <th title={`EMA ${cfg.emaFast} vs EMA ${cfg.emaSlow} on ${per} candles`}>EMA {cfg.emaFast}/{cfg.emaSlow}</th>
               <th title={`Bollinger Bands ${cfg.bbPeriod}, ${cfg.bbMult} on ${per} candles`}>Bollinger</th>
+              <th>Paper</th>
               <th aria-label="Chart" />
               <th aria-label="Remove" />
             </tr>
@@ -336,6 +345,21 @@ function Watchlist({ symbols, notes = {}, ticks, interval, cfg, onAdd, onRemove,
                   )}
                 </td>
                 <td>{r?.bb?.upper != null ? <BbCell price={price} bb={r.bb} /> : <span className="muted-dash">…</span>}</td>
+                <td className="cp-trade-cell">
+                  <button
+                    className={`btn tk-row-trade ${tradeSym === s ? 'on' : ''}`}
+                    onClick={(e) => (e.stopPropagation(), onTrade(s))}
+                    aria-pressed={tradeSym === s}
+                    title={`Paper trade ${coin(s)}`}
+                  >
+                    Trade
+                  </button>
+                  {posOf[s] && (
+                    <div className={`cp-side ${posOf[s].side.toLowerCase()}`} title={`${posOf[s].side === 'LONG' ? 'Long' : 'Short'} ${posOf[s].leverage}× open`}>
+                      {posOf[s].side === 'LONG' ? 'Long' : 'Short'} {posOf[s].leverage}×
+                    </div>
+                  )}
+                </td>
                 <td className="tk-x">
                   <button className="icon-btn tk-chart-btn" onClick={(e) => (e.stopPropagation(), onChart(s))} title={`${coin(s)} chart`} aria-label={`${coin(s)} chart`}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M6 3v3M6 15v6M12 2v5M12 14v3M18 5v4M18 16v5" /><rect x="4" y="6" width="4" height="9" rx="1" /><rect x="10" y="7" width="4" height="7" rx="1" /><rect x="16" y="9" width="4" height="7" rx="1" /></svg>
@@ -426,7 +450,7 @@ const palette = (dark) =>
 const prefersDark = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches;
 const shift = (t) => t + IST_OFFSET; // chart axis in Indian time
 
-function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick, onSymbol }) {
+function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick, onSymbol, onTrade }) {
   const box = useRef(null);
   const chartRef = useRef(null);
   const sRef = useRef({});
@@ -622,7 +646,7 @@ function CryptoChart({ symbol, symbols, interval, setInterval, cfg, setCfg, tick
           {tick?.changePct != null && <span className={`mono ${tone(tick.changePct)}`}>{tick.changePct > 0 ? '+' : ''}{tick.changePct.toFixed(2)}% 24h</span>}
         </div>
         <div className="form-actions">
-          <a className="btn tk-trade-btn cp-chart-trade" href={`#/cpaper/overview?s=${symbol}`} title={`Paper trade ${coin(symbol)}`}>Trade</a>
+          <button className="btn tk-trade-btn" onClick={onTrade} title={`Paper trade ${coin(symbol)}`}>Trade</button>
           <span className={`crypto-live ${live}`}>{live === 'live' ? '● Live' : live === 'down' ? 'Refreshing every 10 s' : 'Connecting…'}</span>
           <div className="seg" role="group" aria-label="Candle interval">
             {['1h', '1d'].map((v) => (

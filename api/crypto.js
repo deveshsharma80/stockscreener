@@ -20,7 +20,8 @@
 // GET  ?action=cp-book                       account, open positions, fills, closed trades (checks liquidations first)
 // POST {action:"cp-trade", symbol, side:"BUY"|"SELL", qty, leverage, price?}   market order (qty in coins)
 // POST {action:"cp-close", symbol, price?}   close a whole position
-// POST {action:"cp-reset", capitalInr, fx?}  start a new period with this money (history kept)
+// POST {action:"cp-reset", capitalInr, fx?, closeOpen?}  start a new period with this money (history kept;
+//                                            closeOpen closes open positions at market first)
 // GET  ?action=cp-check                      liquidation check (for a scheduler; accepts CRON_SECRET)
 // GET  ?action=binance&path=/api/v3/klines&q=<query>
 //      fallback proxy for Binance public market data, used only if the
@@ -186,7 +187,7 @@ export default async function handler(req, res) {
         return res.json({ ok: true, fill: r.fill, ...r.book });
       }
       case 'POST cp-reset':
-        return res.json({ ok: true, ...(await resetAccount({ capitalInr: body.capitalInr, fx: body.fx })) });
+        return res.json({ ok: true, ...(await resetAccount({ capitalInr: body.capitalInr, fx: body.fx, closeOpen: body.closeOpen === true, prices: body.prices && typeof body.prices === 'object' ? body.prices : {} })) });
       case 'GET binance':
         return res.json({ ok: true, data: await proxy(String(req.query?.path || ''), String(req.query?.q || '')) });
       default:

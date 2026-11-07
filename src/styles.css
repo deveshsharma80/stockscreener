@@ -1160,3 +1160,19 @@ td.cd-span { white-space: nowrap; }
 }
 a.btn.cp-chart-trade { text-decoration: none; display: inline-flex; align-items: center; }
 .cp-table th { font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+
+/* Crypto trade box (extends the .qt box) */
+.qt.ct { width: 380px; }
+.ct-amt input { width: 130px; }
+.ct-lev { display: grid; gap: 6px; }
+.ct-levs { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
+.ct-levs button { font: inherit; font-size: 12.5px; font-weight: 600; padding: 4px 0; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
+.ct-levs button.on { color: #fff; background: #2563eb; border-color: #2563eb; }
+.ct-levs button:hover:not(:disabled):not(.on) { border-color: #2563eb; color: var(--text); }
+.ct-levs button:disabled:not(.on) { opacity: 0.4; cursor: not-allowed; }
+.qt-info .pos { color: var(--pos); font-weight: 700; }
+.qt-info .neg { color: #ef4444; font-weight: 700; }
+.cp-trade-cell { white-space: nowrap; }
+.cp-trade-cell .cp-side { margin-top: 3px; font-size: 11.5px; }
+.btn.tk-row-trade.on { background: var(--accent); color: #fff; }
+.cp-acts { display: inline-flex; gap: 6px; align-items: center; }

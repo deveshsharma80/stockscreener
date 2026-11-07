@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SECRET_KEY, SecretGate, store } from './Ticker.jsx';
 import { fmtPrice, lastPrices, useProxy } from './binance.js';
 import { cryptoApi } from './Crypto.jsx';
+import { useCryptoBook } from './cryptoBook.js';
+import CryptoTrade from './CryptoTrade.jsx';
 
 // Crypto paper trading (Binance-Futures style): long / short with 1–10× leverage,
 // 0.05 % fee per side, liquidation when the margin is used up. Money is entered
@@ -24,91 +26,93 @@ const held = (ms) => {
   return h < 48 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d ${h % 24} h`;
 };
 
-/** Rupee formatting for USDT amounts (× rate). */
-function useInr(fx) {
-  return useMemo(() => {
-    const f = (usdt, { signed = false } = {}) => {
-      if (usdt == null || !Number.isFinite(usdt)) return '—';
-      const v = usdt * fx;
-      const a = Math.abs(v);
-      const s = a.toLocaleString('en-IN', { maximumFractionDigits: a < 100 ? 2 : 0 });
-      return `${v < 0 ? '−' : signed && v > 0 ? '+' : ''}₹${s}`;
-    };
-    return f;
-  }, [fx]);
+/** Rupee formatting for USDT amounts (× rate). Plain function, safe anywhere. */
+function useInrStatic(fx) {
+  return (usdt, { signed = false } = {}) => {
+    if (usdt == null || !Number.isFinite(usdt)) return '—';
+    const v = usdt * fx;
+    const a = Math.abs(v);
+    const s = a.toLocaleString('en-IN', { maximumFractionDigits: a < 100 ? 2 : 0 });
+    return `${v < 0 ? '−' : signed && v > 0 ? '+' : ''}₹${s}`;
+  };
 }
+const useInr = useInrStatic;
 const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`);
 const qtyFmt = (q) => (q == null ? '—' : Math.abs(q).toLocaleString('en-US', { maximumSignificantDigits: 8 }));
 
-export default function CryptoPaper({ tab }) {
+/** Sign-in gate shared by the crypto paper pages; renders children(secret). */
+function Gate({ label, children }) {
   const [secret, setSecret] = useState(() => store.get(SECRET_KEY));
   const [checking, setChecking] = useState(Boolean(store.get(SECRET_KEY)));
-  const [unlocked, setUnlocked] = useState(false);
+  const [ok, setOk] = useState(false);
   const [error, setError] = useState('');
-  const [book, setBook] = useState(null);
-  const [prices, setPrices] = useState({});
-  const [notice, setNotice] = useState(null); // { kind, text }
-
-  const load = useCallback(async (s) => {
+  const check = useCallback(async (s) => {
     try {
-      const j = await cryptoApi(s, 'cp-book');
-      setBook(j);
-      if (j.liquidated?.length) {
-        setNotice({ kind: 'err', text: `Liquidated: ${j.liquidated.map((l) => `${coin(l.symbol)} ${l.side.toLowerCase()} at ${fmtPrice(l.price)}`).join(', ')}. The margin was lost.` });
-      }
-      setUnlocked(true);
+      await cryptoApi(s, 'cp-book');
+      setOk(true);
       setError('');
       useProxy(s);
       return true;
     } catch (e) {
       setError(e.message);
-      return e.status !== 401 && e.status !== 403 ? (setUnlocked(true), true) : false;
+      return e.status !== 401 && e.status !== 403 ? (setOk(true), true) : false;
     }
   }, []);
-
   useEffect(() => {
     if (!secret) return;
-    load(secret).then((ok) => {
+    check(secret).then((good) => {
       setChecking(false);
-      if (!ok) {
+      if (!good) {
         store.set(SECRET_KEY, '');
         setSecret('');
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  if (checking) return <p className="tk-note">Opening {label}…</p>;
+  if (!ok) {
+    return (
+      <SecretGate
+        error={error}
+        notice=""
+        onSubmit={async (s, remember) => {
+          setSecret(s);
+          if (await check(s)) store.set(SECRET_KEY, remember ? s : '');
+        }}
+      />
+    );
+  }
+  return children(secret);
+}
 
-  // Refresh the book every 30 s (also runs the server's liquidation check)
-  useEffect(() => {
-    if (!unlocked) return;
-    const t = setInterval(() => !document.hidden && load(secret), 30_000);
-    return () => clearInterval(t);
-  }, [unlocked, secret, load]);
+function Liquidations({ cb }) {
+  if (!cb.liquidated.length) return null;
+  return (
+    <p className="status err cp-notice">
+      Liquidated: {cb.liquidated.map((l) => `${coin(l.symbol)} ${l.side.toLowerCase()} at ${fmtPrice(l.price)}`).join(', ')}. The margin was lost.{' '}
+      <button className="icon-btn" onClick={cb.clearLiquidated} aria-label="Dismiss">×</button>
+    </p>
+  );
+}
 
-  const [ticketSym, setTicketSym] = useState(() => symbolFromHash() || 'BTCUSDT');
+/** Live prices for the open positions; asks the server to check when a liquidation price is crossed. */
+function useLivePrices(book, load, extra = []) {
+  const [prices, setPrices] = useState({});
+  const syms = [...new Set([...(book?.positions || []).map((p) => p.symbol), ...extra].filter(Boolean))];
+  const key = syms.join(',');
+  const asked = useRef(0);
   useEffect(() => {
-    const on = () => symbolFromHash() && setTicketSym(symbolFromHash());
-    window.addEventListener('hashchange', on);
-    return () => window.removeEventListener('hashchange', on);
-  }, []);
-
-  // Live prices for open positions and the ticket's coin
-  const watch = useMemo(() => [...new Set([...(book?.positions || []).map((p) => p.symbol), ticketSym].filter(Boolean))], [book, ticketSym]);
-  const watchKey = watch.join(',');
-  const liqAsked = useRef(0);
-  useEffect(() => {
-    if (!unlocked || !watch.length) return;
+    if (!syms.length) return;
     let alive = true;
     let timer;
     const tick = async () => {
       if (!document.hidden) {
-        const p = await lastPrices(watch).catch(() => ({}));
+        const p = await lastPrices(syms).catch(() => ({}));
         if (!alive) return;
         setPrices((x) => ({ ...x, ...p }));
-        // A position crossed its liquidation price → let the server check and settle it
         const crossed = (book?.positions || []).some((pos) => p[pos.symbol] > 0 && (pos.qty > 0 ? p[pos.symbol] <= pos.liqPrice : p[pos.symbol] >= pos.liqPrice));
-        if (crossed && Date.now() - liqAsked.current > 10_000) {
-          liqAsked.current = Date.now();
-          load(secret);
+        if (crossed && Date.now() - asked.current > 10_000) {
+          asked.current = Date.now();
+          load().catch(() => {});
         }
       }
       if (alive) timer = setTimeout(tick, POLL_MS);
@@ -118,55 +122,13 @@ export default function CryptoPaper({ tab }) {
       alive = false;
       clearTimeout(timer);
     };
-  }, [unlocked, watchKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (checking) return <p className="tk-note">Opening Paper Trading…</p>;
-  if (!unlocked) {
-    return (
-      <SecretGate
-        error={error}
-        notice=""
-        onSubmit={async (s, remember) => {
-          setSecret(s);
-          if (await load(s)) store.set(SECRET_KEY, remember ? s : '');
-        }}
-      />
-    );
-  }
-  if (!book) return <p className="status err">{error || 'Loading…'}</p>;
-
-  const post = async (action, body) => {
-    const j = await cryptoApi(secret, action, { method: 'POST', body });
-    setBook(j); // every cp-* POST answers with the whole book
-    return j;
-  };
-
-  return (
-    <>
-      {notice && (
-        <p className={`status ${notice.kind} cp-notice`}>
-          {notice.text}{' '}
-          <button className="icon-btn" onClick={() => setNotice(null)} aria-label="Dismiss">×</button>
-        </p>
-      )}
-      {error && <p className="status err">{error}</p>}
-      {tab === 'reports' ? (
-        <Reports book={book} />
-      ) : tab === 'fills' ? (
-        <Fills book={book} />
-      ) : (
-        <Overview book={book} prices={prices} post={post} sym={ticketSym} setSym={setTicketSym} setNotice={setNotice} />
-      )}
-    </>
-  );
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return prices;
 }
 
-// ------------------------------------------------------------------ overview
-
-function Overview({ book, prices, post, sym, setSym, setNotice }) {
-  const inr = useInr(book.fx);
+/** Totals with live unrealised P&L. */
+function liveTotals(book, prices) {
   const t = book.totals;
-  // Live unrealised P&L from the page's prices (the server's figure is from its last read)
   const rows = book.positions.map((p) => {
     const price = prices[p.symbol] ?? p.price;
     const upnl = price != null ? (price - p.avg) * p.qty : null;
@@ -174,91 +136,21 @@ function Overview({ book, prices, post, sym, setSym, setNotice }) {
   });
   const upnl = rows.every((r) => r.upnl != null) ? rows.reduce((s, r) => s + r.upnl, 0) : null;
   const equity = upnl != null ? t.balance + upnl : null;
-  const available = t.balance - t.usedMargin - Math.max(0, -(upnl ?? 0));
-  const periodNet = t.realized - t.fees;
+  return { rows, upnl, equity, available: t.balance - t.usedMargin - Math.max(0, -(upnl ?? 0)), net: t.realized - t.fees };
+}
 
+function SummaryStats({ book, live }) {
+  const inr = useInr(book.fx);
+  const t = book.totals;
+  const eq = live.equity ?? t.balance;
   return (
-    <>
-      <section className="stats cp-stats">
-        <Stat label="Equity" value={inr(equity ?? t.balance)} note={`started ${inr(t.capital)}`} />
-        <Stat label="Open P&L" value={inr(upnl, { signed: true })} tone={tone(upnl)} note={`${rows.length} open`} />
-        <Stat label="Booked P&L (this period)" value={inr(periodNet, { signed: true })} tone={tone(periodNet)} note={`after ${inr(t.fees)} fees`} />
-        <Stat label="Available" value={inr(Math.max(0, available))} note={`margin in use ${inr(t.usedMargin)}`} />
-        <Stat label="Return" value={pct(((equity ?? t.balance) / t.capital - 1) * 100)} tone={tone((equity ?? t.balance) - t.capital)} note={`₹${book.fx} per USDT`} />
-      </section>
-      <div className="cp-grid">
-        <Ticket book={book} prices={prices} post={post} sym={sym} setSym={setSym} available={available} setNotice={setNotice} />
-        <AccountCard book={book} post={post} setNotice={setNotice} />
-      </div>
-      <section className="card">
-        <div className="card-head">
-          <h2>Open positions</h2>
-        </div>
-        {!rows.length ? (
-          <div className="empty">No open positions. Use the ticket above to open a long or short.</div>
-        ) : (
-          <div className="table-wrap">
-            <table className="ticker cp-table">
-              <thead>
-                <tr>
-                  <th>Coin</th>
-                  <th className="num">Size</th>
-                  <th className="num">Entry</th>
-                  <th className="num">Price</th>
-                  <th className="num">Liq. price</th>
-                  <th className="num">Margin</th>
-                  <th className="num">P&amp;L</th>
-                  <th className="num">ROE</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((p) => (
-                  <tr key={p.symbol}>
-                    <td className="tk-inst">
-                      <div className="tk-name">
-                        <button className="cp-link" onClick={() => setSym(p.symbol)} title="Trade this coin">{coin(p.symbol)}</button>
-                      </div>
-                      <div className="tk-sub">
-                        <span className={`cp-side ${p.side.toLowerCase()}`}>{p.side === 'LONG' ? 'Long' : 'Short'} {p.leverage}×</span>
-                        <span>since {when(p.openedAt)}</span>
-                      </div>
-                    </td>
-                    <td className="num mono">
-                      {qtyFmt(p.qty)} <span className="muted-cell">{coin(p.symbol)}</span>
-                      <div className="muted-cell">{inr(p.notional)}</div>
-                    </td>
-                    <td className="num mono">{fmtPrice(p.avg)}</td>
-                    <td className="num mono"><b>{fmtPrice(p.price)}</b></td>
-                    <td className="num mono">
-                      {fmtPrice(p.liqPrice)}
-                      {p.toLiq != null && <div className={`cp-toliq ${Math.abs(p.toLiq) < 3 ? 'near' : ''}`}>{Math.abs(p.toLiq).toFixed(1)}% away</div>}
-                    </td>
-                    <td className="num mono">{inr(p.margin)}</td>
-                    <td className={`num mono ${tone(p.upnl)}`}><b>{inr(p.upnl, { signed: true })}</b></td>
-                    <td className="num">
-                      <span className={`tk-pnlpct ${p.roe > 0 ? 'up' : p.roe < 0 ? 'down' : 'flat'}`}>{pct(p.roe)}</span>
-                    </td>
-                    <td className="lp-act">
-                      <CloseBtn
-                        onClose={async () => {
-                          const j = await post('cp-close', { symbol: p.symbol, price: p.price });
-                          setNotice({ kind: 'ok', text: `Closed ${coin(p.symbol)} at ${fmtPrice(j.fill.price)}: ${inr(j.fill.realized - j.fill.fee, { signed: true })} on this exit (after fee).` });
-                        }}
-                        onError={(m) => setNotice({ kind: 'err', text: m })}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div className="foot">
-          Prices: Binance last price (perpetual, else spot), refreshed every 3 s · liquidation when the loss reaches the margin · fee {(book.feeRate * 100).toFixed(2)}% per side
-        </div>
-      </section>
-    </>
+    <section className="stats cp-stats">
+      <Stat label="Equity" value={inr(eq)} note={`started ${inr(t.capital)}`} />
+      <Stat label="Open P&L" value={inr(live.upnl, { signed: true })} tone={tone(live.upnl)} note={`${live.rows.length} open`} />
+      <Stat label="Booked P&L (this period)" value={inr(live.net, { signed: true })} tone={tone(live.net)} note={`after ${inr(t.fees)} fees`} />
+      <Stat label="Available" value={inr(Math.max(0, live.available))} note={`margin in use ${inr(t.usedMargin)}`} />
+      <Stat label="Return" value={pct((eq / t.capital - 1) * 100)} tone={tone(eq - t.capital)} note={`₹${book.fx} per USDT`} />
+    </section>
   );
 }
 
@@ -272,6 +164,7 @@ function Stat({ label, value, note, tone: t = '' }) {
   );
 }
 
+/** Close → "Confirm close" (4 s) → done. */
 function CloseBtn({ onClose, onError }) {
   const [stage, setStage] = useState('idle');
   useEffect(() => {
@@ -299,161 +192,166 @@ function CloseBtn({ onClose, onError }) {
   );
 }
 
-function Ticket({ book, prices, post, sym, setSym, available, setNotice }) {
-  const inr = useInr(book.fx);
-  const [draft, setDraft] = useState(coin(sym));
-  useEffect(() => setDraft(coin(sym)), [sym]);
-  const [side, setSide] = useState('BUY');
-  const [lev, setLev] = useState(() => Number(store.get('stockhits.cpLev')) || 3);
-  const [marginInr, setMarginInr] = useState('');
-  const [closeAll, setCloseAll] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const price = prices[sym] ?? null;
-  const pos = book.positions.find((p) => p.symbol === sym);
-  const adding = pos && (side === 'BUY') === pos.qty > 0;
-  const reducing = pos && !adding;
-  const useLev = adding ? pos.leverage : lev; // leverage for a new / flipped position
-  const sizeLev = pos ? pos.leverage : lev; // ₹ margin → position size
+// ------------------------------------------------------------------ Positions (left menu: Crypto → Positions)
 
-  const margin = Number(marginInr) / book.fx; // USDT
-  const qty = closeAll && reducing ? Math.abs(pos.qty) : price > 0 && margin > 0 ? (margin * sizeLev) / price : 0;
-  const notional = price > 0 ? qty * price : 0;
-  const fee = notional * book.feeRate;
-  const liq = price > 0 ? (side === 'BUY' ? price * (1 - 1 / useLev) : price * (1 + 1 / useLev)) : null;
-  const canUse = Math.max(0, available) + (reducing ? pos.margin : 0);
-  const setPct = (p) => {
-    const m = (canUse * p) / 100 / (1 + sizeLev * book.feeRate); // leave room for the fee
-    setCloseAll(false);
-    setMarginInr(String(Math.floor(m * book.fx)));
-  };
+export function CryptoPositions() {
+  return <Gate label="Positions">{(secret) => <PositionsPage secret={secret} />}</Gate>;
+}
 
-  const submit = async () => {
-    if (!(qty > 0)) return;
-    setBusy(true);
-    try {
-      const j = await post('cp-trade', { symbol: sym, side, qty: Number(qty.toPrecision(8)), leverage: useLev, price });
-      const f = j.fill;
-      setNotice({
-        kind: 'ok',
-        text: `${f.side === 'BUY' ? 'Bought' : 'Sold'} ${qtyFmt(f.qty)} ${coin(sym)} at ${fmtPrice(f.price)} (${inr(f.notional)}, ${f.leverage}×)${f.realized ? ` · booked ${inr(f.realized - f.fee, { signed: true })}` : ''}${f.priceSource === 'browser' ? ' · price from this page (server couldn’t reach Binance)' : ''}.`,
-      });
-      setMarginInr('');
-      setCloseAll(false);
-    } catch (e) {
-      setNotice({ kind: 'err', text: e.message });
-    }
-    setBusy(false);
-  };
-
-  const pickSym = () => {
-    const s = draft.trim().toUpperCase().replace(/[^A-Z0-9\u0080-￿]/g, '');
-    if (s) setSym(s.endsWith('USDT') ? s : `${s}USDT`);
-  };
-
-  const action = closeAll && reducing ? `Close ${pos.side.toLowerCase()}` : !pos ? (side === 'BUY' ? 'Open long' : 'Open short') : adding ? `Add to ${pos.side.toLowerCase()}` : qty > Math.abs(pos.qty) ? `Close & flip to ${side === 'BUY' ? 'long' : 'short'}` : `Reduce ${pos.side.toLowerCase()}`;
-
+function PositionsPage({ secret }) {
+  const cb = useCryptoBook(secret);
+  const [tradeSym, setTradeSym] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const prices = useLivePrices(cb.book, cb.load);
+  if (!cb.book) return <p className={cb.error ? 'status err' : 'tk-note'}>{cb.error || 'Loading positions…'}</p>;
+  const book = cb.book;
+  const inr = useInrStatic(book.fx);
+  const live = liveTotals(book, prices);
   return (
-    <section className="card cp-ticket">
-      <div className="card-head">
-        <h2>Trade</h2>
-        <span className="muted-cell">market order</span>
-      </div>
-      <div className="cp-ticket-body">
-        <div className="cp-row">
-          <label className="cp-sym">
-            <span>Coin</span>
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={pickSym} onKeyDown={(e) => e.key === 'Enter' && pickSym()} aria-label="Coin" spellCheck={false} />
-            <span className="muted-cell">/USDT</span>
-          </label>
-          <div className="cp-price">
-            <b className="mono">{price != null ? fmtPrice(price) : '…'}</b>
-            <span className="muted-cell">{price != null ? `${inr(price)} per coin` : 'loading price'}</span>
+    <>
+      <Liquidations cb={cb} />
+      {notice && (
+        <p className={`status ${notice.kind} cp-notice`}>
+          {notice.text} <button className="icon-btn" onClick={() => setNotice(null)} aria-label="Dismiss">×</button>
+        </p>
+      )}
+      <SummaryStats book={book} live={live} />
+      <section className="card">
+        <div className="card-head">
+          <h2>Open positions</h2>
+          <a className="link" href="#/crypto/watchlist">Trade from Coins →</a>
+        </div>
+        {!live.rows.length ? (
+          <div className="empty">No open positions. Use the Trade button on a coin in Coins to open a long or short.</div>
+        ) : (
+          <div className="table-wrap">
+            <table className="ticker cp-table">
+              <thead>
+                <tr>
+                  <th>Coin</th>
+                  <th className="num">Size</th>
+                  <th className="num">Entry</th>
+                  <th className="num">Price</th>
+                  <th className="num">Liq. price</th>
+                  <th className="num">Margin</th>
+                  <th className="num">P&amp;L</th>
+                  <th className="num">ROE</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {live.rows.map((p) => (
+                  <tr key={p.symbol}>
+                    <td className="tk-inst">
+                      <div className="tk-name">
+                        <a className="link" href={`#/crypto/chart?s=${p.symbol}`}>{coin(p.symbol)}</a>
+                      </div>
+                      <div className="tk-sub">
+                        <span className={`cp-side ${p.side.toLowerCase()}`}>{p.side === 'LONG' ? 'Long' : 'Short'} {p.leverage}×</span>
+                        <span>since {when(p.openedAt)}</span>
+                      </div>
+                    </td>
+                    <td className="num mono">
+                      {qtyFmt(p.qty)} <span className="muted-cell">{coin(p.symbol)}</span>
+                      <div className="muted-cell">{inr(p.notional)}</div>
+                    </td>
+                    <td className="num mono">{fmtPrice(p.avg)}</td>
+                    <td className="num mono"><b>{fmtPrice(p.price)}</b></td>
+                    <td className="num mono">
+                      {fmtPrice(p.liqPrice)}
+                      {p.toLiq != null && <div className={`cp-toliq ${Math.abs(p.toLiq) < 3 ? 'near' : ''}`}>{Math.abs(p.toLiq).toFixed(1)}% away</div>}
+                    </td>
+                    <td className="num mono">{inr(p.margin)}</td>
+                    <td className={`num mono ${tone(p.upnl)}`}><b>{inr(p.upnl, { signed: true })}</b></td>
+                    <td className="num">
+                      <span className={`tk-pnlpct ${p.roe > 0 ? 'up' : p.roe < 0 ? 'down' : 'flat'}`}>{pct(p.roe)}</span>
+                    </td>
+                    <td className="lp-act">
+                      <div className="cp-acts">
+                      <button className="btn tk-row-trade" onClick={() => setTradeSym((s) => (s === p.symbol ? null : p.symbol))}>Trade</button>
+                      <CloseBtn
+                        onClose={async () => {
+                          const j = await cb.post('cp-close', { symbol: p.symbol, price: p.price });
+                          setNotice({ kind: 'ok', text: `Closed ${coin(p.symbol)} at ${fmtPrice(j.fill.price)}: ${inr(j.fill.realized - j.fill.fee, { signed: true })} on this exit (after fee).` });
+                        }}
+                        onError={(m) => setNotice({ kind: 'err', text: m })}
+                      />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-        <div className="seg cp-side-seg" role="group" aria-label="Direction">
-          <button className={side === 'BUY' ? 'on buy' : ''} onClick={() => setSide('BUY')}>Buy / Long</button>
-          <button className={side === 'SELL' ? 'on sell' : ''} onClick={() => setSide('SELL')}>Sell / Short</button>
-        </div>
-        <label className="cp-lev">
-          <span>
-            Leverage <b className="mono">{useLev}×</b>
-            {adding && <small className="muted-cell"> (fixed while the position is open)</small>}
-          </span>
-          <input
-            type="range"
-            min="1"
-            max={book.maxLeverage}
-            step="1"
-            value={useLev}
-            disabled={adding}
-            onChange={(e) => {
-              setLev(Number(e.target.value));
-              store.set('stockhits.cpLev', e.target.value);
-            }}
-            aria-label="Leverage"
-          />
-        </label>
-        <label className="cp-amt">
-          <span>Margin (your money)</span>
-          <div className="cp-amt-in">
-            <span>₹</span>
-            <input type="number" inputMode="decimal" min="0" step="any" value={closeAll && reducing ? String(Math.round(pos.margin * book.fx)) : marginInr} onChange={(e) => (setCloseAll(false), setMarginInr(e.target.value))} placeholder="0" aria-label="Margin in rupees" />
-          </div>
-        </label>
-        <div className="cp-chips">
-          {[10, 25, 50, 100].map((p) => (
-            <button key={p} className="cp-chip" onClick={() => setPct(p)}>{p}%</button>
-          ))}
-          {pos && (
-            <button className={`cp-chip ${closeAll && reducing ? 'on' : ''}`} onClick={() => (setSide(pos.qty > 0 ? 'SELL' : 'BUY'), setCloseAll(true))}>
-              Close all {qtyFmt(pos.qty)}
-            </button>
-          )}
-        </div>
-        <dl className="cp-facts">
-          <dt>Position size</dt>
-          <dd className="mono">{notional ? `${inr(notional)} · ${qtyFmt(qty)} ${coin(sym)}` : '—'}</dd>
-          <dt>Fee</dt>
-          <dd className="mono">{notional ? inr(fee) : '—'}</dd>
-          {!reducing && (
-            <>
-              <dt>Liquidation at</dt>
-              <dd className="mono">{notional && liq ? `${fmtPrice(liq)} (${(100 / useLev).toFixed(1)}% ${side === 'BUY' ? 'down' : 'up'})` : '—'}</dd>
-            </>
-          )}
-          <dt>Available</dt>
-          <dd className="mono">{inr(canUse)}</dd>
-        </dl>
-        <button className={`btn cp-go ${side === 'BUY' ? 'buy' : 'sell'}`} onClick={submit} disabled={busy || !(qty > 0) || !(price > 0)}>
-          {busy ? 'Placing…' : action}
-        </button>
-        {pos && (
-          <p className="muted-cell cp-small">
-            You hold {pos.side === 'LONG' ? 'a long' : 'a short'} of {qtyFmt(pos.qty)} {coin(sym)} at {pos.leverage}×. {reducing ? 'This order reduces it' : 'This order adds to it'}; the ₹ amount is margin at {pos.leverage}×.
-          </p>
         )}
-
-      </div>
-    </section>
+        <div className="foot">
+          Prices: Binance last price (perpetual, else spot), refreshed every 3 s · liquidation when the loss reaches the margin · fee {(book.feeRate * 100).toFixed(2)}% per side
+        </div>
+      </section>
+      {tradeSym && <CryptoTrade symbol={tradeSym} book={book} post={cb.post} onClose={() => setTradeSym(null)} />}
+    </>
   );
 }
 
-function AccountCard({ book, post, setNotice }) {
+// ------------------------------------------------------------------ Paper Trading (account, reports, fills)
+
+export default function CryptoPaper({ tab }) {
+  return <Gate label="Paper Trading">{(secret) => <PaperPage secret={secret} tab={tab} />}</Gate>;
+}
+
+function PaperPage({ secret, tab }) {
+  const cb = useCryptoBook(secret);
+  const [notice, setNotice] = useState(null);
+  const prices = useLivePrices(tab === 'account' ? cb.book : null, cb.load);
+  if (!cb.book) return <p className={cb.error ? 'status err' : 'tk-note'}>{cb.error || 'Loading…'}</p>;
+  const book = cb.book;
+  return (
+    <>
+      <Liquidations cb={cb} />
+      {notice && (
+        <p className={`status ${notice.kind} cp-notice`}>
+          {notice.text} <button className="icon-btn" onClick={() => setNotice(null)} aria-label="Dismiss">×</button>
+        </p>
+      )}
+      {tab === 'reports' ? (
+        <Reports book={book} />
+      ) : tab === 'fills' ? (
+        <Fills book={book} />
+      ) : (
+        <>
+          <SummaryStats book={book} live={liveTotals(book, prices)} />
+          <AccountCard book={book} post={cb.post} setNotice={setNotice} prices={prices} />
+        </>
+      )}
+    </>
+  );
+}
+
+function AccountCard({ book, post, setNotice, prices = {} }) {
   const inr = useInr(book.fx);
   const [amount, setAmount] = useState(String(book.account.capitalInr));
   const [fx, setFx] = useState(String(book.fx));
   const [busy, setBusy] = useState(false);
-  const open = book.positions.length > 0;
+  const [confirm, setConfirm] = useState(false);
+  const open = book.positions.length;
+  useEffect(() => {
+    if (!confirm) return;
+    const t = setTimeout(() => setConfirm(false), 6000);
+    return () => clearTimeout(t);
+  }, [confirm]);
   const reset = async () => {
+    if (!confirm) return setConfirm(true);
+    setConfirm(false);
     setBusy(true);
     try {
-      await post('cp-reset', { capitalInr: Number(amount), fx: Number(fx) });
-      setNotice({ kind: 'ok', text: `New period started with ₹${Number(amount).toLocaleString('en-IN')}. Earlier trades stay in Reports (All time).` });
+      await post('cp-reset', { capitalInr: Number(amount), fx: Number(fx), closeOpen: open > 0, prices });
+      setNotice({ kind: 'ok', text: `${open ? `Closed ${open} position${open === 1 ? '' : 's'} at market and started` : 'Started'} a new period with ₹${Number(amount).toLocaleString('en-IN')}. Earlier trades stay in Reports (All time).` });
     } catch (e) {
       setNotice({ kind: 'err', text: e.message });
     }
     setBusy(false);
   };
+  const label = open ? `Close ${open} position${open === 1 ? '' : 's'} & reset` : 'Reset paper money';
   return (
     <section className="card cp-account">
       <div className="card-head">
@@ -461,26 +359,33 @@ function AccountCard({ book, post, setNotice }) {
       </div>
       <div className="cp-ticket-body">
         <p className="muted-cell cp-small">
-          Current period started {book.account.resetAt ? when(book.account.resetAt) : 'with your first trade'} with ₹{book.account.capitalInr.toLocaleString('en-IN')} ({inr(book.totals.capital)} = {book.totals.capital.toLocaleString('en-US', { maximumFractionDigits: 2 })} USDT).
+          Current period {book.account.resetAt ? `started ${when(book.account.resetAt)}` : 'started with your first trade'} with ₹{book.account.capitalInr.toLocaleString('en-IN')} ({book.totals.capital.toLocaleString('en-US', { maximumFractionDigits: 2 })} USDT at ₹{book.fx}). Balance now {inr(book.totals.balance)}.
         </p>
         <label className="cp-amt">
-          <span>Start a new period with</span>
+          <span>Amount to paper trade</span>
           <div className="cp-amt-in">
             <span>₹</span>
-            <input type="number" min="1000" step="1000" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="New amount in rupees" />
+            <input type="number" min="1000" step="1000" value={amount} onChange={(e) => (setAmount(e.target.value), setConfirm(false))} aria-label="Amount in rupees" />
           </div>
         </label>
+        <div className="cp-chips">
+          {[50000, 100000, 500000, 1000000].map((v) => (
+            <button key={v} className={`cp-chip ${Number(amount) === v ? 'on' : ''}`} onClick={() => (setAmount(String(v)), setConfirm(false))}>₹{v.toLocaleString('en-IN')}</button>
+          ))}
+        </div>
         <label className="cp-amt">
           <span>Rate (₹ per USDT)</span>
           <div className="cp-amt-in">
             <span>₹</span>
-            <input type="number" min="1" step="0.01" value={fx} onChange={(e) => setFx(e.target.value)} aria-label="Rupees per USDT" />
+            <input type="number" min="1" step="0.01" value={fx} onChange={(e) => (setFx(e.target.value), setConfirm(false))} aria-label="Rupees per USDT" />
           </div>
         </label>
-        <button className="btn" onClick={reset} disabled={busy || open} title={open ? 'Close open positions first' : ''}>
-          {busy ? 'Saving…' : 'Reset paper money'}
+        <button className={`btn ${confirm ? 'danger' : 'primary'}`} onClick={reset} disabled={busy || !(Number(amount) >= 1000)}>
+          {busy ? 'Saving…' : confirm ? `Confirm: ${label.toLowerCase()}` : label}
         </button>
-        <p className="muted-cell cp-small">{open ? 'Close open positions before resetting. ' : ''}Resetting keeps every past trade for Reports.</p>
+        <p className="muted-cell cp-small">
+          Resetting starts a new period with this amount{open ? ' after closing your open positions at market' : ''}. Every past trade stays in Reports (All time).
+        </p>
       </div>
     </section>
   );
