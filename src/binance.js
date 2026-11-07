@@ -115,6 +115,25 @@ export async function perpSymbols() {
     .sort();
 }
 
+/**
+ * Last prices { SYMBOL: price } — perpetual price where the coin has one, else spot.
+ * One light request for all perpetuals (weight 2), plus spot for the rest.
+ */
+export async function lastPrices(symbols) {
+  const out = {};
+  if (!symbols.length) return out;
+  try {
+    for (const t of await rest('/fapi/v1/ticker/price')) if (symbols.includes(t.symbol)) out[t.symbol] = +t.price;
+  } catch {}
+  const rest2 = symbols.filter((s) => !(out[s] > 0));
+  if (rest2.length) {
+    try {
+      for (const t of await rest('/api/v3/ticker/price', { symbols: JSON.stringify(rest2) })) out[t.symbol] = +t.price;
+    } catch {}
+  }
+  return out;
+}
+
 /** 24-hour stats for some symbols: { BTCUSDT: { price, changePct, quoteVolume, high, low } } */
 export async function tickers(symbols) {
   if (!symbols.length) return {};
