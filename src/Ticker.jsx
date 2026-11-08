@@ -790,11 +790,12 @@ function PositionsCard({ book, quotes, onExit, exits, onChart }) {
             <thead>
               <tr>
                 <th>Instrument</th>
+                <th className="num">Open P&amp;L</th>
+                <th className="num">P&amp;L %</th>
                 <th className="num">Qty</th>
                 <th className="num">Avg price</th>
                 <th className="num">LTP</th>
-                <th className="num">Open P&amp;L</th>
-                <th className="num">P&amp;L %</th>
+                <th>SL / TP</th>
                 <th className="num">Booked today</th>
                 <th className="num">Brokerage today</th>
                 <th className="num">Net today</th>
@@ -813,23 +814,27 @@ function PositionsCard({ book, quotes, onExit, exits, onChart }) {
                       {!p.qty && <span>Closed</span>}
                       {p.carried && <span className="tk-carried" title="Intraday positions should be closed the same day">Not squared off</span>}
                     </div>
-                    {p.qty !== 0 && (
-                      <div className="tk-sub pos-exits">
-                        {exits?.get(p.key)?.SL != null && <span className="exit-tag SL">SL {price.format(exits.get(p.key).SL)}</span>}
-                        {exits?.get(p.key)?.TP != null && <span className="exit-tag TP">TP {price.format(exits.get(p.key).TP)}</span>}
-                        <button className="link" onClick={() => onChart(p.key)}>
-                          {exits?.get(p.key) ? 'Edit SL / TP on chart' : 'Set SL / TP on chart'}
-                        </button>
-                      </div>
-                    )}
                   </td>
+                  <td className={`num mono tk-pos-pnl ${tone(p.open)}`}>{p.qty ? (p.open != null ? <b>{signed.format(p.open)}</b> : '…') : <span className="muted-dash">—</span>}</td>
+                  <td className="num"><PnlPct pct={p.pct} pos={p} /></td>
                   <td className="num mono">
                     {p.qty ? <b className={p.qty > 0 ? 'long' : 'short'}>{p.qty > 0 ? `+${p.qty}` : p.qty}</b> : '0'}
                   </td>
                   <td className="num mono">{p.qty ? price.format(p.avg) : <span className="muted-dash">—</span>}</td>
                   <td className="num mono">{p.ltp != null ? price.format(p.ltp) : <span className="muted-dash">{p.qty ? '…' : '—'}</span>}</td>
-                  <td className={`num mono ${tone(p.open)}`}>{p.qty ? (p.open != null ? signed.format(p.open) : '…') : <span className="muted-dash">—</span>}</td>
-                  <td className="num"><PnlPct pct={p.pct} pos={p} /></td>
+                  <td className="pos-exits-cell">
+                    {p.qty !== 0 ? (
+                      <div className="pos-exits">
+                        {exits?.get(p.key)?.SL != null && <span className="exit-tag SL">SL {price.format(exits.get(p.key).SL)}</span>}
+                        {exits?.get(p.key)?.TP != null && <span className="exit-tag TP">TP {price.format(exits.get(p.key).TP)}</span>}
+                        <button className="link" onClick={() => onChart(p.key)}>
+                          {exits?.get(p.key) ? 'Edit on chart' : 'Set on chart'}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="muted-dash">—</span>
+                    )}
+                  </td>
                   <td className={`num mono ${tone(p.realizedToday)}`}>{signed.format(p.realizedToday)}</td>
                   <td className="num mono muted-cell">{p.chargesToday ? `−${price.format(p.chargesToday)}` : '0'}</td>
                   <td className={`num mono ${tone(p.total)}`}>{p.total != null ? <b>{signed.format(p.total)}</b> : '…'}</td>

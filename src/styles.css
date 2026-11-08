@@ -1201,3 +1201,37 @@ a.btn.cp-chart-trade { text-decoration: none; display: inline-flex; align-items:
   .cp-pos-table th, .cp-pos-table td { padding-left: 8px; padding-right: 8px; }
   .cp-roe { min-width: 0; font-size: 13.5px; padding: 4px 7px; }
 }
+
+/* Running P&L pill: solid dark green / dark red with white text (like the ROE badge) */
+.lp-pill.pos, .lp-pill.neg { color: #fff; border-color: transparent; }
+.lp-pill.pos { background: #15803d; }
+.lp-pill.neg { background: #b91c1c; }
+.lp-pill.pos:hover { background: #166534; }
+.lp-pill.neg:hover { background: #991b1b; }
+.lp-pill.pos .lp-label, .lp-pill.neg .lp-label,
+.lp-pill.pos .lp-val, .lp-pill.neg .lp-val,
+.lp-pill.pos .lp-pct, .lp-pill.neg .lp-pct,
+.lp-pill.pos .lp-count, .lp-pill.neg .lp-count { color: #fff; }
+.lp-pill.pos .lp-count, .lp-pill.neg .lp-count { border-left-color: rgba(255, 255, 255, 0.35); opacity: 0.9; }
+.lp-pill.pos .lp-dot, .lp-pill.neg .lp-dot { background: #fff; }
+.lp-pill .lp-val { font-size: 16px; font-weight: 700; }
+.lp-pill .lp-pct { font-size: 14px; font-weight: 700; }
+.lp-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* NSE positions / P&L panel: P&L next to the instrument, solid P&L % badge */
+.tk-pnlpct { color: #fff !important; font-size: 14px; font-weight: 700; padding: 4px 9px; border-radius: 7px; min-width: 72px; text-align: center; }
+.tk-pnlpct.up { background: #15803d; }
+.tk-pnlpct.down { background: #b91c1c; }
+.tk-pnlpct.flat { background: #57534e; }
+.tk-pos-table td.tk-inst, .lp-table td.tk-inst { min-width: 0; width: 1%; padding-right: 10px; }
+.tk-pos-table td.tk-pos-pnl b, .lp-table td.mono b { font-size: 15px; }
+.pos-exits-cell .pos-exits { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; white-space: nowrap; }
+@media (max-width: 640px) {
+  .tk-pos-table th, .tk-pos-table td, .lp-table th, .lp-table td { padding-left: 8px; padding-right: 8px; }
+  .tk-pnlpct, .cp-roe { min-width: 0; font-size: 13.5px; padding: 4px 7px; }
+}
+@media (max-width: 640px) {
+  .tk-pos-table td.tk-inst, .lp-table td.tk-inst, .cp-pos-table td.cp-coin { max-width: 128px; }
+  .tk-pos-table td.tk-inst .tk-name, .lp-table td.tk-inst .tk-name { white-space: normal; word-break: break-word; }
+  .tk-pos-table td.tk-inst .tk-sub, .lp-table td.tk-inst .tk-sub { flex-wrap: wrap; row-gap: 3px; }
+}

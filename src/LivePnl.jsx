@@ -175,11 +175,11 @@ export default function LivePnl() {
                     <thead>
                       <tr>
                         <th>Instrument</th>
+                        <th className="num">P&amp;L</th>
+                        <th className="num">P&amp;L %</th>
                         <th className="num">Qty</th>
                         <th className="num">Avg</th>
                         <th className="num">LTP</th>
-                        <th className="num">P&amp;L</th>
-                        <th className="num">P&amp;L %</th>
                         <th />
                       </tr>
                     </thead>
@@ -194,11 +194,6 @@ export default function LivePnl() {
                               <span className={`tk-prod ${p.product}`}>{PRODUCT_SHORT[p.product] || p.product}</span>
                             </div>
                           </td>
-                          <td className="num mono">
-                            <b className={p.qty > 0 ? 'long' : 'short'}>{p.qty > 0 ? `+${p.qty.toLocaleString('en-IN')}` : p.qty.toLocaleString('en-IN')}</b>
-                          </td>
-                          <td className="num mono">{price.format(p.avg)}</td>
-                          <td className="num mono">{p.ltp != null ? price.format(p.ltp) : '…'}</td>
                           <td className={`num mono ${tone(p.pnl)}`}>{p.pnl != null ? <b>{signed.format(p.pnl)}</b> : '…'}</td>
                           <td className="num">
                             {p.pct != null ? (
@@ -209,6 +204,11 @@ export default function LivePnl() {
                               <span className="muted-dash">…</span>
                             )}
                           </td>
+                          <td className="num mono">
+                            <b className={p.qty > 0 ? 'long' : 'short'}>{p.qty > 0 ? `+${p.qty.toLocaleString('en-IN')}` : p.qty.toLocaleString('en-IN')}</b>
+                          </td>
+                          <td className="num mono">{price.format(p.avg)}</td>
+                          <td className="num mono">{p.ltp != null ? price.format(p.ltp) : '…'}</td>
                           <td className="lp-act">
                             <ExitRow pos={p} onExit={() => exit(p)} onError={(text) => setMsg({ kind: 'err', text })} />
                           </td>
