@@ -8,6 +8,7 @@ import Crypto from './Crypto.jsx';
 import Movers from './Movers.jsx';
 import CandleData from './CandleData.jsx';
 import CryptoPaper, { CryptoPositions } from './CryptoPaper.jsx';
+import CryptoLivePnl from './CryptoLivePnl.jsx';
 import FirstHits from './FirstHits.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
@@ -62,7 +63,7 @@ export const SECTIONS = [
   },
   {
     id: 'crypto',
-    label: 'Coins',
+    label: 'Futures',
     icon: 'coin',
     tabs: [
       ['watchlist', 'Watchlist', 'Binance prices with RSI, EMA trend and Bollinger readings'],
@@ -1016,6 +1017,11 @@ function Shell({ auth, onLogout }) {
             {group.id === 'nse' && (
               <div className="pagehead-pnl">
                 <LivePnl />
+              </div>
+            )}
+            {group.id === 'crypto' && (
+              <div className="pagehead-pnl">
+                <CryptoLivePnl />
               </div>
             )}
             <div className="pagehead-actions" ref={setActionsEl} />

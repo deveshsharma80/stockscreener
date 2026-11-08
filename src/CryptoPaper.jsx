@@ -228,10 +228,10 @@ function PositionsPage({ secret }) {
       <section className="card">
         <div className="card-head">
           <h2>Open positions</h2>
-          <a className="link" href="#/crypto/watchlist">Trade from Coins →</a>
+          <a className="link" href="#/crypto/watchlist">Trade from Futures →</a>
         </div>
         {!live.rows.length ? (
-          <div className="empty">No open positions. Use the Trade button on a coin in Coins to open a long or short.</div>
+          <div className="empty">No open positions. Use the Trade button on a coin in Futures to open a long or short.</div>
         ) : (
           <div className="table-wrap">
             <table className="ticker cp-table">
