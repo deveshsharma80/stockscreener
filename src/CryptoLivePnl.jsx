@@ -136,11 +136,11 @@ export default function CryptoLivePnl() {
                     <thead>
                       <tr>
                         <th>Coin</th>
+                        <th className="num">P&amp;L</th>
+                        <th className="num">ROE</th>
                         <th className="num">Size</th>
                         <th className="num">Entry</th>
                         <th className="num">Price</th>
-                        <th className="num">P&amp;L</th>
-                        <th className="num">ROE</th>
                         <th />
                       </tr>
                     </thead>
@@ -157,20 +157,20 @@ export default function CryptoLivePnl() {
                               {p.tp != null && <span className="cp-sltp"><span className="tp">TP {fmtPrice(p.tp)}</span></span>}
                             </div>
                           </td>
+                          <td className={`num mono ${tone(p.pnl)}`}>{p.pnl != null ? <b>{inr(p.pnl, true)}</b> : '…'}</td>
+                          <td className="num">
+                            {p.roe != null ? (
+                              <span className={`cp-roe ${p.roe > 0 ? 'up' : p.roe < 0 ? 'down' : 'flat'}`}>{p.roe > 0 ? '+' : ''}{p.roe.toFixed(2)}%</span>
+                            ) : (
+                              <span className="muted-dash">…</span>
+                            )}
+                          </td>
                           <td className="num mono">
                             {qtyFmt(p.qty)}
                             <div className="muted-cell">{inr(p.notional)}</div>
                           </td>
                           <td className="num mono">{fmtPrice(p.avg)}</td>
                           <td className="num mono">{p.price != null ? fmtPrice(p.price) : '…'}</td>
-                          <td className={`num mono ${tone(p.pnl)}`}>{p.pnl != null ? <b>{inr(p.pnl, true)}</b> : '…'}</td>
-                          <td className="num">
-                            {p.roe != null ? (
-                              <span className={`tk-pnlpct ${p.roe > 0 ? 'up' : p.roe < 0 ? 'down' : 'flat'}`}>{p.roe > 0 ? '+' : ''}{p.roe.toFixed(2)}%</span>
-                            ) : (
-                              <span className="muted-dash">…</span>
-                            )}
-                          </td>
                           <td className="lp-act">
                             <ExitRow pos={p} onExit={() => exit(p)} onError={(text) => setMsg({ kind: 'err', text })} />
                           </td>

@@ -1188,3 +1188,16 @@ a.btn.cp-chart-trade { text-decoration: none; display: inline-flex; align-items:
 @media (prefers-color-scheme: dark) { .cp-sltp .sl, .ind-tag.cp-sl { color: #f87171; } .cp-sltp .tp, .ind-tag.cp-tp { color: #4ade80; } }
 .tk-holding { font-size: 13px; color: var(--muted); white-space: nowrap; }
 .lp-table .tk-sub .cp-sltp { font-size: 11.5px; }
+/* ROE badge: solid dark red / green, white text */
+.cp-roe { display: inline-block; min-width: 72px; text-align: center; font-family: var(--mono); font-size: 14px; font-weight: 700; padding: 4px 9px; border-radius: 7px; color: #fff; font-variant-numeric: tabular-nums; }
+.cp-roe.up { background: #15803d; }
+.cp-roe.down { background: #b91c1c; }
+.cp-roe.flat { background: #57534e; }
+.cp-pos-table td.cp-pnl b { font-size: 15px; }
+.cp-pos-table td.cp-coin { white-space: nowrap; }
+.cp-opened { white-space: nowrap; font-size: 12.5px; }
+.cp-pos-table td.cp-coin, .lp-table td.tk-inst { min-width: 0; width: 1%; padding-right: 10px; }
+@media (max-width: 640px) {
+  .cp-pos-table th, .cp-pos-table td { padding-left: 8px; padding-right: 8px; }
+  .cp-roe { min-width: 0; font-size: 13.5px; padding: 4px 7px; }
+}

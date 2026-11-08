@@ -163,6 +163,12 @@ function SummaryStats({ book, live }) {
   );
 }
 
+/** ROE % in a solid dark red / dark green badge with white text. */
+export function RoeBadge({ v }) {
+  if (v == null || !Number.isFinite(v)) return <span className="muted-dash">—</span>;
+  return <span className={`cp-roe ${v > 0 ? 'up' : v < 0 ? 'down' : 'flat'}`}>{pct(v)}</span>;
+}
+
 function Stat({ label, value, note, tone: t = '' }) {
   return (
     <div className="stat">
@@ -234,32 +240,36 @@ function PositionsPage({ secret }) {
           <div className="empty">No open positions. Use the Trade button on a coin in Futures to open a long or short.</div>
         ) : (
           <div className="table-wrap">
-            <table className="ticker cp-table">
+            <table className="ticker cp-table cp-pos-table">
               <thead>
                 <tr>
                   <th>Coin</th>
+                  <th className="num">P&amp;L</th>
+                  <th className="num">ROE</th>
                   <th className="num">Size</th>
                   <th className="num">Entry</th>
                   <th className="num">Price</th>
                   <th className="num">Liq. price</th>
                   <th className="num">SL / TP</th>
                   <th className="num">Margin</th>
-                  <th className="num">P&amp;L</th>
-                  <th className="num">ROE</th>
                   <th />
+                  <th>Opened</th>
                 </tr>
               </thead>
               <tbody>
                 {live.rows.map((p) => (
                   <tr key={p.symbol}>
-                    <td className="tk-inst">
+                    <td className="tk-inst cp-coin">
                       <div className="tk-name">
                         <a className="link" href={`#/crypto/chart?s=${p.symbol}`}>{coin(p.symbol)}</a>
                       </div>
                       <div className="tk-sub">
                         <span className={`cp-side ${p.side.toLowerCase()}`}>{p.side === 'LONG' ? 'Long' : 'Short'} {p.leverage}×</span>
-                        <span>since {when(p.openedAt)}</span>
                       </div>
+                    </td>
+                    <td className={`num mono cp-pnl ${tone(p.upnl)}`}><b>{inr(p.upnl, { signed: true })}</b></td>
+                    <td className="num">
+                      <RoeBadge v={p.roe} />
                     </td>
                     <td className="num mono">
                       {qtyFmt(p.qty)} <span className="muted-cell">{coin(p.symbol)}</span>
@@ -282,22 +292,19 @@ function PositionsPage({ secret }) {
                       )}
                     </td>
                     <td className="num mono">{inr(p.margin)}</td>
-                    <td className={`num mono ${tone(p.upnl)}`}><b>{inr(p.upnl, { signed: true })}</b></td>
-                    <td className="num">
-                      <span className={`tk-pnlpct ${p.roe > 0 ? 'up' : p.roe < 0 ? 'down' : 'flat'}`}>{pct(p.roe)}</span>
-                    </td>
                     <td className="lp-act">
                       <div className="cp-acts">
-                      <button className="btn tk-row-trade" onClick={() => setTradeSym((s) => (s === p.symbol ? null : p.symbol))}>Trade</button>
-                      <CloseBtn
-                        onClose={async () => {
-                          const j = await cb.post('cp-close', { symbol: p.symbol, price: p.price });
-                          setNotice({ kind: 'ok', text: `Closed ${coin(p.symbol)} at ${fmtPrice(j.fill.price)}: ${inr(j.fill.realized - j.fill.fee, { signed: true })} on this exit (after fee).` });
-                        }}
-                        onError={(m) => setNotice({ kind: 'err', text: m })}
-                      />
+                        <button className="btn tk-row-trade" onClick={() => setTradeSym((s) => (s === p.symbol ? null : p.symbol))}>Trade</button>
+                        <CloseBtn
+                          onClose={async () => {
+                            const j = await cb.post('cp-close', { symbol: p.symbol, price: p.price });
+                            setNotice({ kind: 'ok', text: `Closed ${coin(p.symbol)} at ${fmtPrice(j.fill.price)}: ${inr(j.fill.realized - j.fill.fee, { signed: true })} on this exit (after fee).` });
+                          }}
+                          onError={(m) => setNotice({ kind: 'err', text: m })}
+                        />
                       </div>
                     </td>
+                    <td className="muted-cell cp-opened">{when(p.openedAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -516,7 +523,7 @@ function Reports({ book }) {
                     <td className="num mono">{fmtPrice(t.exit)}</td>
                     <td className="num mono muted-cell">{inr(t.fees)}</td>
                     <td className={`num mono ${tone(t.net)}`}><b>{inr(t.net, { signed: true })}</b></td>
-                    <td className="num"><span className={`tk-pnlpct ${t.roe > 0 ? 'up' : t.roe < 0 ? 'down' : 'flat'}`}>{pct(t.roe)}</span></td>
+                    <td className="num"><RoeBadge v={t.roe} /></td>
                   </tr>
                 ))}
               </tbody>

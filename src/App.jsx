@@ -80,7 +80,7 @@ export const SECTIONS = [
     id: 'cpos',
     label: 'Positions',
     icon: 'candles',
-    tabs: [['open', 'Open positions', 'Your crypto paper positions with live P&L — trade from the Trade button on Coins']],
+    tabs: [['open', 'Open positions', 'Your crypto paper positions with live P&L — trade from the Trade button on Futures']],
   },
   {
     id: 'cpaper',
