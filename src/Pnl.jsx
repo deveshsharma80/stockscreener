@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, fmtExpiry, kindOf, money, price, segLabel, signed, store } from './Ticker.jsx';
 import { BOOK_EVENT } from './Orders.jsx';
+import PaperCharts from './PaperCharts.jsx';
 
 // Paper-trading P&L reports: daily and weekly booked P&L, plus live open P&L.
 
@@ -313,6 +314,7 @@ export default function Pnl({ subview = 'overview' }) {
 
       )}
 
+      {subview !== 'charts' && (
       <div className="pnl-typebar">
         <span className="flabel">Trade type</span>
         <div className="seg" role="group" aria-label="Trade type">
@@ -323,8 +325,9 @@ export default function Pnl({ subview = 'overview' }) {
           ))}
         </div>
       </div>
+      )}
 
-      {subview !== 'trades' && (
+      {subview !== 'trades' && subview !== 'charts' && (
       <section className="stats pnl-tiles">
         <Tile
           label={`Today's net P&L${type === 'ALL' ? '' : ` · ${PRODUCT_LABEL[type]}`}`}
@@ -371,6 +374,8 @@ export default function Pnl({ subview = 'overview' }) {
         </div>
       </section>
       )}
+
+      {subview === 'charts' && <PaperCharts trades={book.trades} />}
 
       {subview === 'trades' && (
       <section className="card" id="pnl-trades">

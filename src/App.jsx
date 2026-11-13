@@ -58,6 +58,7 @@ export const SECTIONS = [
     tabs: [
       ['overview', 'Overview', 'Paper account, today’s and this week’s P&L by trade type'],
       ['reports', 'Reports', 'Daily and weekly P&L after brokerage'],
+      ['charts', 'Charts', 'P&L lines by trade type, daily bars, win rate, brokerage and instruments'],
       ['trades', 'Fills', 'Every Buy / Sell fill, with brokerage and P&L'],
     ],
   },
