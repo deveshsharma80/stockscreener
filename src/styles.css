@@ -1374,3 +1374,11 @@ a.btn.cp-chart-trade { text-decoration: none; display: inline-flex; align-items:
   .calc-sticky .calc-pct { font-size: 14px; }
 }
 @media (max-width: 520px) { .calc-hero > b { font-size: 30px; } .calc-two { grid-template-columns: 1fr; } }
+
+/* ---------- Big Movers → 4h BB + RSI ---------- */
+.bbs-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 0 20px 16px; }
+.bbs-controls .tk-ema-in input.w-sm { width: 64px; }
+.bbs-controls .push { margin-left: auto; }
+.bbs-forming { display: inline-block; margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: 5px; background: var(--warn-bg, #fef3c7); color: var(--warn, #92400e); vertical-align: 1px; }
+.bbs-table td.jr-day { white-space: nowrap; }
+@media (max-width: 520px) { .stat-value.bbs-split { font-size: 18px; } .bbs-controls { padding: 0 14px 14px; } }

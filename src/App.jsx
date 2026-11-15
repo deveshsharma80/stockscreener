@@ -11,6 +11,7 @@ import CryptoPaper, { CryptoPositions } from './CryptoPaper.jsx';
 import CryptoLivePnl from './CryptoLivePnl.jsx';
 import FirstHits from './FirstHits.jsx';
 import Calculator from './Calculator.jsx';
+import BBScan from './BBScan.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
 import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
@@ -76,7 +77,10 @@ export const SECTIONS = [
     id: 'movers',
     label: 'Big Movers',
     icon: 'rocket',
-    tabs: [['history', 'History', 'Past days when a coin closed far above its open, and what happened next']],
+    tabs: [
+      ['history', 'History', 'Past days when a coin closed far above its open, and what happened next'],
+      ['bb4h', '4h BB + RSI', '4-hour candles whose low is above the upper Bollinger Band with RSI above 70'],
+    ],
   },
   {
     id: 'cpos',
@@ -1050,7 +1054,7 @@ function Shell({ auth, onLogout }) {
           {section.id === 'market' && <Ticker subview={tab} actionsEl={actionsEl} />}
           {section.id === 'trades' && <Journal subview={tab} />}
           {section.id === 'crypto' && <Crypto subview={tab} actionsEl={actionsEl} />}
-          {section.id === 'movers' && <Movers />}
+          {section.id === 'movers' && (tab === 'bb4h' ? <BBScan /> : <Movers />)}
           {section.id === 'candles' && <CandleData />}
           {section.id === 'cpos' && <CryptoPositions />}
           {section.id === 'cpaper' && <CryptoPaper tab={tab} />}
