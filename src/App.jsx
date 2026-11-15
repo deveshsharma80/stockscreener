@@ -10,6 +10,7 @@ import CandleData from './CandleData.jsx';
 import CryptoPaper, { CryptoPositions } from './CryptoPaper.jsx';
 import CryptoLivePnl from './CryptoLivePnl.jsx';
 import FirstHits from './FirstHits.jsx';
+import Calculator from './Calculator.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
 import { AddToTicker, TickerLinkProvider } from './AddToTicker.jsx';
@@ -99,11 +100,18 @@ export const SECTIONS = [
     icon: 'database',
     tabs: [['4h', '4-hour perps', '3 months of 4-hour candles for every USDT perpetual, with RSI 14 and EMA 5 / 9 / 21']],
   },
+  {
+    id: 'calc',
+    label: 'P/L Calculator',
+    icon: 'calculator',
+    tabs: [['crypto', 'Crypto', 'Profit / loss for a crypto futures trade: leverage, brokerage, breakeven, liquidation and target prices']],
+  },
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.
 export const GROUPS = [
   { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper'] },
   { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'cpos', 'cpaper', 'movers', 'candles'] },
+  { id: 'tools', label: 'Tools', short: '⚒', sections: ['calc'] },
 ];
 const groupOf = (sectionId) => GROUPS.find((g) => g.sections.includes(sectionId)) || GROUPS[0];
 const GROUPS_KEY = 'stockhits.navGroupsClosed';
@@ -1047,6 +1055,7 @@ function Shell({ auth, onLogout }) {
           {section.id === 'cpos' && <CryptoPositions />}
           {section.id === 'cpaper' && <CryptoPaper tab={tab} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
+          {section.id === 'calc' && <Calculator market={tab} />}
         </div>
       </main>
     </div>
@@ -1166,6 +1175,13 @@ function Icon({ name }) {
       return (
         <svg {...p}>
           <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10" />
+        </svg>
+      );
+    case 'calculator':
+      return (
+        <svg {...p}>
+          <rect x="5" y="2.5" width="14" height="19" rx="2.5" />
+          <path d="M8.5 6.5h7v3h-7zM8.5 13h.01M12 13h.01M15.5 13h.01M8.5 16.5h.01M12 16.5h.01M15.5 16.5h.01" />
         </svg>
       );
     case 'database':
