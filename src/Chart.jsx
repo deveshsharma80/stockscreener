@@ -533,6 +533,7 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
               k={k}
               value={levels[k]}
               pnl={pnlLabel(levels[k])}
+              pct={pnlPctOf(pnlAt(levels[k]), position)}
               busy={savingExit === k}
               onAdd={() => addExit(k)}
               onSet={(v) => {
@@ -644,7 +645,7 @@ function trendText({ fast, slow }, cfg) {
 }
 
 /** "+ Stop loss" button, or the level with an editable price and a remove button. */
-function ExitChip({ k, value, pnl, busy, onAdd, onSet, onRemove }) {
+function ExitChip({ k, value, pnl, pct, busy, onAdd, onSet, onRemove }) {
   const [draft, setDraft] = useState(null); // text while typing
   if (value == null) {
     return (
@@ -676,7 +677,14 @@ function ExitChip({ k, value, pnl, busy, onAdd, onSet, onRemove }) {
         aria-label={`${EXIT_NAME[k]} price`}
         disabled={busy}
       />
-      <span className={`mono exit-pnl ${pnl.startsWith('+') ? 'pos' : 'neg'}`}>{busy ? 'saving…' : pnl}</span>
+      <span className={`mono exit-pnl ${pnl.startsWith('+') ? 'pos' : 'neg'}`}>
+        {busy ? 'saving…' : pnl}
+        {!busy && pct != null && Number.isFinite(pct) && (
+          <i className={`exit-pct ${pct >= 0 ? 'pos' : 'neg'}`} title="Return on the money in this trade (margin)">
+            {pct >= 0 ? '+' : '−'}{Math.abs(pct).toFixed(2)}%
+          </i>
+        )}
+      </span>
       <button className="exit-x" onClick={onRemove} disabled={busy} aria-label={`Remove ${EXIT_NAME[k]}`} title={`Remove ${EXIT_NAME[k]}`}>×</button>
     </span>
   );

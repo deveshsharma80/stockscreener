@@ -769,6 +769,9 @@ table.journal th button { white-space: nowrap; }
 .exit-chip input { width: 92px; font: inherit; font-family: var(--mono); font-size: 13px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 .exit-pnl { font-size: 12.5px; min-width: 60px; }
 .exit-pnl.pos { color: var(--pos); } .exit-pnl.neg { color: var(--neg); }
+.exit-pnl { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.exit-pct { font-style: normal; font-size: 12px; font-weight: 700; color: #fff; padding: 1px 6px; border-radius: 5px; }
+.exit-pct.pos { background: #15803d; } .exit-pct.neg { background: #b91c1c; }
 .exit-x { all: unset; cursor: pointer; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); font-size: 16px; }
 .exit-x:hover { background: var(--surface-2); color: var(--text); }
 .tk-exit-hint { color: var(--muted); font-size: 12.5px; }

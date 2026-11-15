@@ -907,6 +907,7 @@ function CryptoChart({ symbol, symbols, interval, onInterval, cfg, setCfg, tick,
               k={k}
               value={levels[k]}
               pnl={inr(pnlAt(levels[k]))}
+              pct={position.margin > 0 && pnlAt(levels[k]) != null ? (pnlAt(levels[k]) / position.margin) * 100 : null}
               busy={savingExit === k}
               onAdd={() => addExit(k)}
               onSet={(v) => {
@@ -985,7 +986,7 @@ function CryptoChart({ symbol, symbols, interval, onInterval, cfg, setCfg, tick,
 }
 
 /** "+ Stop loss" button, or the level with an editable price and a remove button. */
-function CExitChip({ k, value, pnl, busy, onAdd, onSet, onRemove }) {
+function CExitChip({ k, value, pnl, pct, busy, onAdd, onSet, onRemove }) {
   const [draft, setDraft] = useState(null);
   if (value == null) {
     return (
@@ -1017,7 +1018,14 @@ function CExitChip({ k, value, pnl, busy, onAdd, onSet, onRemove }) {
         aria-label={`${EXIT_NAME[k]} price`}
         disabled={busy}
       />
-      <span className={`mono exit-pnl ${pnl.startsWith('+') ? 'pos' : 'neg'}`}>{busy ? 'saving…' : pnl}</span>
+      <span className={`mono exit-pnl ${pnl.startsWith('+') ? 'pos' : 'neg'}`}>
+        {busy ? 'saving…' : pnl}
+        {!busy && pct != null && Number.isFinite(pct) && (
+          <i className={`exit-pct ${pct >= 0 ? 'pos' : 'neg'}`} title="Return on the money in this trade (margin)">
+            {pct >= 0 ? '+' : '−'}{Math.abs(pct).toFixed(2)}%
+          </i>
+        )}
+      </span>
       <button className="exit-x" onClick={onRemove} disabled={busy} aria-label={`Remove ${EXIT_NAME[k]}`} title={`Remove ${EXIT_NAME[k]}`}>×</button>
     </span>
   );
