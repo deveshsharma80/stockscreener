@@ -33,6 +33,7 @@ import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
 import { checkLiquidations, closePosition, computeBook, placeTrade, resetAccount, setExit } from '../lib/cryptopaper.js';
+import { readBBScan, runBBScan } from '../lib/bbscan.js';
 import { candleStatus, coinCandles, deleteAllCandles, deleteHourlyCandles, pruneCandles, saveCandles, scanCandles } from '../lib/candles.js';
 
 const TABLE = 'crypto_watchlist';
@@ -103,7 +104,7 @@ export default async function handler(req, res) {
     }
     const body = req.method === 'POST' ? parseBody(req) || {} : {};
     const action = req.method === 'POST' ? body.action : req.query?.action;
-    checkSecret(req, { cron: action === 'scan' || action === 'cp-check' }); // scheduler jobs may use CRON_SECRET
+    checkSecret(req, { cron: action === 'scan' || action === 'cp-check' || action === 'bb-scan' }); // scheduler jobs may use CRON_SECRET
 
     switch (`${req.method} ${action}`) {
       case 'GET watchlist': {
@@ -117,6 +118,11 @@ export default async function handler(req, res) {
         if (!(minPct > 0 && minPct <= 10000)) throw new HttpError(400, 'minPct must be a percentage above 0, e.g. 40');
         return res.json({ ok: true, ...(await runDailyScan({ minPct })) });
       }
+      case 'GET bb-scan':
+      case 'POST bb-scan':
+        return res.json({ ok: true, ...(await runBBScan()) });
+      case 'GET bb-scan-result':
+        return res.json({ ok: true, ...(await readBBScan()) });
       case 'GET scan-hits':
         return res.json({ ok: true, hits: (await readHits()).slice().reverse() });
       case 'POST add': {

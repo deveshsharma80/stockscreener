@@ -1,17 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { SECRET_KEY, store } from './Ticker.jsx';
+import { SECRET_KEY, SecretGate, store } from './Ticker.jsx';
 import { fmtCompact, fmtPrice, futuresKlines, perpSymbols, useProxy } from './binance.js';
 import { cryptoApi as api } from './Crypto.jsx';
-import { bollinger, rsi } from './indicators.js';
+import { CANDLES, H4, LOOKBACK_MAX, bbHits } from './bbcore.js';
 
 // Big Movers → 4h BB + RSI: every Binance USDT perpetual, 4-hour candles, listing
 // each candle whose LOW is above the upper Bollinger Band and whose RSI is above
 // the level — the whole candle traded outside the band. Runs in the browser
 // (one request per coin, straight from Binance); the last result is kept on this device.
 
-const H4 = 4 * 3600;
 const CONCURRENCY = 4;
-const CANDLES = 300; // enough warm-up for RSI (Wilder) + BB 30 + 7 days of look-back
 const STORE = 'stockhits.bbscan';
 const LOOKBACK = [
   [1, 'Latest candle'],
@@ -36,71 +34,75 @@ function loadSaved() {
   }
 }
 
-/** Every candle in the look-back window where low > upper band and RSI > level. */
-export function bbHits(symbol, cs, { bbLen, bbMult, rsiLen, rsiMin, lookback, includeForming, nowSec }) {
-  if (cs.length < Math.max(bbLen, rsiLen + 1) + 1) return [];
-  const bb = bollinger(cs, bbLen, bbMult);
-  const r = rsi(cs, rsiLen);
-  // The last candle is still forming if it hasn't closed yet.
-  let last = cs.length - 1;
-  const forming = cs[last].time + H4 > nowSec;
-  if (forming && !includeForming) last -= 1;
-  const out = [];
-  const nowPrice = cs[cs.length - 1].close;
-  for (let i = Math.max(0, last - lookback + 1); i <= last; i++) {
-    const c = cs[i];
-    const up = bb.upper[i];
-    if (up == null || r[i] == null) continue;
-    if (!(c.low > up && r[i] > rsiMin)) continue;
-    const after = cs.slice(i + 1, i + 7); // up to 6 candles (24h) after, including one still forming
-    out.push({
-      symbol,
-      time: c.time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-      upper: up,
-      rsi: r[i],
-      gap: (c.low / up - 1) * 100,
-      chg: (c.close / c.open - 1) * 100,
-      quoteVolume: c.quoteVolume,
-      next1: cs[i + 1] && cs[i + 1].time + H4 <= nowSec ? (cs[i + 1].close / c.close - 1) * 100 : null,
-      max6: after.length ? (Math.max(...after.map((x) => x.high)) / c.close - 1) * 100 : null,
-      min6: after.length ? (Math.min(...after.map((x) => x.low)) / c.close - 1) * 100 : null,
-      now: i < cs.length - 1 ? (nowPrice / c.close - 1) * 100 : null,
-      forming: i === cs.length - 1 && forming,
-    });
-  }
-  return out;
-}
-
 export default function BBScan() {
-  const secret = store.get(SECRET_KEY);
-  const [saved, setSaved] = useState(loadSaved);
+  const [secret, setSecret] = useState(() => store.get(SECRET_KEY));
+  const [gateErr, setGateErr] = useState('');
+  const [auto, setAuto] = useState(null); // saved by the automatic server scan
+  const [manual, setManual] = useState(loadSaved); // your last "Run now" on this device
+  const [source, setSource] = useState('auto');
+  const [loading, setLoading] = useState(Boolean(secret));
   const [watch, setWatch] = useState(new Set());
+
+  const load = async (s) => {
+    const r = await api(s, 'bb-scan-result'); // throws on a wrong secret
+    useProxy(s);
+    if (r?.meta) setAuto({ meta: r.meta, rows: r.rows || [] });
+    api(s, 'watchlist')
+      .then((w) => setWatch(new Set(w.symbols)))
+      .catch(() => {});
+  };
 
   useEffect(() => {
     if (!secret) return;
-    useProxy(secret);
-    api(secret, 'watchlist')
-      .then((w) => setWatch(new Set(w.symbols)))
-      .catch(() => {});
-  }, [secret]);
+    load(secret)
+      .catch(() => {
+        store.set(SECRET_KEY, '');
+        setSecret('');
+      })
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onSaved = (s) => {
-    setSaved(s);
+  if (!secret) {
+    return (
+      <SecretGate
+        error={gateErr}
+        notice=""
+        onSubmit={async (s, remember) => {
+          try {
+            await load(s);
+            setGateErr('');
+            setSecret(s);
+            store.set(SECRET_KEY, remember ? s : '');
+          } catch (e) {
+            setGateErr(e.message);
+          }
+        }}
+      />
+    );
+  }
+
+  const onManual = (s) => {
+    setManual(s);
+    setSource('manual');
     try {
       localStorage.setItem(STORE, JSON.stringify(s));
     } catch {}
   };
 
+  const shown = source === 'manual' && manual?.meta ? manual : auto?.meta ? auto : manual?.meta ? manual : null;
+  const which = shown === auto ? 'auto' : 'manual';
+
   return (
     <>
-      <ScanBox saved={saved} onSaved={onSaved} />
-      {saved?.meta && (
+      <ScanBox saved={manual} autoMeta={auto?.meta} onSaved={onManual} />
+      {loading && !shown && <p className="tk-note">Loading the latest automatic scan…</p>}
+      {shown && (
         <Results
-          saved={saved}
+          key={`${which}-${shown.meta.runAt}`}
+          saved={shown}
+          which={which}
+          both={Boolean(auto?.meta && manual?.meta)}
+          onSource={setSource}
           watch={watch}
           canWatch={Boolean(secret)}
           onWatch={async (s) => {
@@ -109,25 +111,29 @@ export default function BBScan() {
           }}
         />
       )}
+      {!loading && !shown && (
+        <section className="card pad">
+          <p className="muted">No scan yet. The automatic scan fills this in after the next 4-hour candle closes, or tap <b>Run now</b>.</p>
+        </section>
+      )}
     </>
   );
 }
 
 // ------------------------------------------------------------------ scan
 
-function ScanBox({ saved, onSaved }) {
+function ScanBox({ saved, autoMeta, onSaved }) {
   const m = saved?.meta || {};
   const [bbLen, setBbLen] = useState(String(m.bbLen ?? 30));
   const [bbMult, setBbMult] = useState(String(m.bbMult ?? 2));
   const [rsiLen, setRsiLen] = useState(String(m.rsiLen ?? 14));
   const [rsiMin, setRsiMin] = useState(String(m.rsiMin ?? 70));
-  const [lookback, setLookback] = useState(m.lookback ?? 6);
   const [includeForming, setIncludeForming] = useState(m.includeForming ?? false);
   const [run, setRun] = useState(null);
   const [err, setErr] = useState('');
   const cancel = useRef(false);
 
-  const cfg = { bbLen: Math.round(+bbLen), bbMult: +bbMult, rsiLen: Math.round(+rsiLen), rsiMin: +rsiMin, lookback, includeForming };
+  const cfg = { bbLen: Math.round(+bbLen), bbMult: +bbMult, rsiLen: Math.round(+rsiLen), rsiMin: +rsiMin, lookback: LOOKBACK_MAX, includeForming };
   const ok = cfg.bbLen >= 2 && cfg.bbLen <= 200 && cfg.bbMult > 0 && cfg.rsiLen >= 2 && cfg.rsiLen <= 100 && cfg.rsiMin > 0 && cfg.rsiMin < 100;
 
   const start = async () => {
@@ -195,16 +201,17 @@ function ScanBox({ saved, onSaved }) {
           <p className="muted scan-sub">
             Checks <b>every Binance USDT perpetual</b> and lists each 4-hour candle whose <b>low is above the upper Bollinger Band</b> ({ok ? `${cfg.bbLen}, ${cfg.bbMult}` : '…'}) with{' '}
             <b>RSI {ok ? cfg.rsiLen : '…'} above {ok ? cfg.rsiMin : '…'}</b> — the whole candle traded outside the band. Candles start 1:30, 5:30, 9:30 … IST.
-            {saved?.meta && <> Last run {runFmt.format(new Date(saved.meta.runAt))}.</>}
+          </p>
+          <p className="muted scan-sub bbs-auto">
+            {autoMeta ? (
+              <>⟳ Runs automatically every 4 hours with BB 30, 2 and RSI 14 &gt; 70 · last run <b>{runFmt.format(new Date(autoMeta.runAt))}</b>. Use <b>Run now</b> to try other settings.</>
+            ) : (
+              <>⟳ The automatic 4-hourly scan hasn’t saved a result yet. You can <b>Run now</b> any time.</>
+            )}
           </p>
         </div>
       </div>
       <div className="bbs-controls">
-        <div className="seg" role="group" aria-label="Look back">
-          {LOOKBACK.map(([n, label]) => (
-            <button key={n} className={lookback === n ? 'on' : ''} onClick={() => setLookback(n)} disabled={busy}>{label}</button>
-          ))}
-        </div>
         {num('BB length', bbLen, setBbLen, { min: 2, max: 200, step: 1, className: 'w-sm' })}
         {num('StdDev', bbMult, setBbMult, { min: 0.5, max: 5, step: 0.5, className: 'w-sm' })}
         {num('RSI length', rsiLen, setRsiLen, { min: 2, max: 100, step: 1, className: 'w-sm' })}
@@ -216,7 +223,7 @@ function ScanBox({ saved, onSaved }) {
         {busy ? (
           <button className="btn btn-close push" onClick={() => (cancel.current = true)} disabled={run.phase !== 'scan'}>Cancel</button>
         ) : (
-          <button className="btn primary push" onClick={start} disabled={!ok}>{saved?.meta ? 'Run again' : 'Run scan'}</button>
+          <button className="btn primary push" onClick={start} disabled={!ok}>Run now</button>
         )}
       </div>
       {busy && (
@@ -230,8 +237,8 @@ function ScanBox({ saved, onSaved }) {
         </div>
       )}
       {err && <p className="status err tk-pos-msg">{err}</p>}
-      {!saved?.meta && !busy && !err && (
-        <p className="muted mv-first">Takes about a minute (one request per coin, straight from Binance). The last result is kept on this device.</p>
+      {!saved?.meta && !autoMeta && !busy && !err && (
+        <p className="muted mv-first">Run now takes about a minute (one request per coin, straight from Binance) and looks back 7 days; its result is kept on this device.</p>
       )}
     </section>
   );
@@ -253,17 +260,20 @@ const COLS = [
   ['now', 'Now', 'num', 'Price now vs this close'],
 ];
 
-function Results({ saved, watch, canWatch, onWatch }) {
+function Results({ saved, which, both, onSource, watch, canWatch, onWatch }) {
   const { meta, rows } = saved;
   const [q, setQ] = useState('');
   const [latestOnly, setLatestOnly] = useState(false);
+  const [win, setWin] = useState(6);
+  const lastClosed = Math.floor(meta.runAt / 1000 / H4) * H4 - H4;
   const [sort, setSort] = useState({ key: 'time', dir: 'desc' });
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState('');
 
   const view = useMemo(() => {
     const term = q.trim().toUpperCase();
-    let list = rows.filter((r) => !term || coin(r.symbol).startsWith(term));
+    const from = lastClosed - (win - 1) * H4;
+    let list = rows.filter((r) => (r.forming || r.time >= from) && (!term || coin(r.symbol).startsWith(term)));
     if (latestOnly) {
       const seen = new Set();
       list = [...list].sort((a, b) => b.time - a.time).filter((r) => (seen.has(r.symbol) ? false : seen.add(r.symbol)));
@@ -278,8 +288,8 @@ function Results({ saved, watch, canWatch, onWatch }) {
       const c = typeof x === 'string' ? x.localeCompare(y) : x - y;
       return (dir === 'asc' ? c : -c) || b.gap - a.gap;
     });
-  }, [rows, q, latestOnly, sort]);
-  useEffect(() => setPage(1), [q, latestOnly, sort]);
+  }, [rows, q, latestOnly, sort, win, lastClosed]);
+  useEffect(() => setPage(1), [q, latestOnly, sort, win]);
 
   const stats = useMemo(() => {
     const avg = (f) => {
@@ -298,7 +308,7 @@ function Results({ saved, watch, canWatch, onWatch }) {
   const cur = Math.min(page, pages);
   const shown = view.slice((cur - 1) * PAGE, cur * PAGE);
   const toggle = (key) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: key === 'symbol' ? 'asc' : 'desc' }));
-  const lookLabel = LOOKBACK.find(([n]) => n === meta.lookback)?.[1] || `${meta.lookback} candles`;
+  const lookLabel = LOOKBACK.find(([n]) => n === win)?.[1] || `${win} candles`;
 
   const exportCsv = () => {
     const head = ['CandleOpenIST', 'Coin', 'Pair', 'Open', 'High', 'Low', 'Close', 'UpperBand', 'LowAboveBandPct', 'RSI', 'CandlePct', 'QuoteVolumeUSDT', 'Next4hPct', 'Best24hPct', 'Worst24hPct', 'NowPct', 'Forming'];
@@ -342,13 +352,24 @@ function Results({ saved, watch, canWatch, onWatch }) {
 
       <section className="card">
         <div className="filters">
+          {both && (
+            <div className="seg" role="group" aria-label="Which result">
+              <button className={which === 'auto' ? 'on' : ''} onClick={() => onSource('auto')}>Automatic</button>
+              <button className={which === 'manual' ? 'on' : ''} onClick={() => onSource('manual')}>My run</button>
+            </div>
+          )}
+          <div className="seg" role="group" aria-label="Show candles from">
+            {LOOKBACK.map(([n, label]) => (
+              <button key={n} className={win === n ? 'on' : ''} onClick={() => setWin(n)}>{label}</button>
+            ))}
+          </div>
           <input className="search" placeholder="Search coin" value={q} onChange={(e) => setQ(e.target.value)} />
           <label className="switch">
             <input type="checkbox" checked={latestOnly} onChange={(e) => setLatestOnly(e.target.checked)} />
             <span>Latest per coin only</span>
           </label>
           <span className="muted-cell mv-range">
-            BB {meta.bbLen}, {meta.bbMult} · RSI {meta.rsiLen} &gt; {meta.rsiMin} · {lookLabel}
+            {which === 'auto' ? 'Automatic' : 'My run'} {runFmt.format(new Date(meta.runAt))} · BB {meta.bbLen}, {meta.bbMult} · RSI {meta.rsiLen} &gt; {meta.rsiMin}
             {meta.includeForming ? ' · incl. forming candle' : ' · completed candles'}
           </span>
           <button className="btn push" onClick={exportCsv} disabled={!view.length}>Export CSV</button>
@@ -415,7 +436,7 @@ function Results({ saved, watch, canWatch, onWatch }) {
               ))}
             </tbody>
           </table>
-          {!view.length && <div className="empty">{rows.length ? 'No candles match the search.' : `No coin had a 4-hour candle fully above the band with RSI above ${meta.rsiMin} in this window.`}</div>}
+          {!view.length && <div className="empty">{rows.length && q ? 'No candles match the search.' : `No coin had a 4-hour candle fully above the band with RSI above ${meta.rsiMin} in this period.`}</div>}
         </div>
         <div className="foot jr-foot">
           <span>
