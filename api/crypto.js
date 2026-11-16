@@ -27,6 +27,7 @@
 // GET  ?action=cp-check                      liquidation + SL/TP + trigger-order check (for a scheduler; accepts CRON_SECRET)
 // POST {action:"cp-order", symbol, side, trigger, amountInr, leverage, sl?, tp?, hint?}   trade automatically at a price
 // POST {action:"cp-order-cancel", id}        cancel an open trigger order
+// GET  ?action=cp-levels                     what the feed server should watch (accepts CRON_SECRET)
 // GET  ?action=binance&path=/api/v3/klines&q=<query>
 //      fallback proxy for Binance public market data, used only if the
 //      browser can't reach Binance directly. Binance blocks some US servers;
@@ -36,6 +37,7 @@ import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.
 import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
 import { cancelOrder, checkLiquidations, closePosition, computeBook, placeOrder, placeTrade, resetAccount, setExit } from '../lib/cryptopaper.js';
 import { readBBScan, runBBScan } from '../lib/bbscan.js';
+import { levelsOf, pushLevels } from '../lib/feed.js';
 import { candleStatus, coinCandles, deleteAllCandles, deleteHourlyCandles, pruneCandles, saveCandles, scanCandles } from '../lib/candles.js';
 
 const TABLE = 'crypto_watchlist';
@@ -106,7 +108,13 @@ export default async function handler(req, res) {
     }
     const body = req.method === 'POST' ? parseBody(req) || {} : {};
     const action = req.method === 'POST' ? body.action : req.query?.action;
-    checkSecret(req, { cron: action === 'scan' || action === 'cp-check' || action === 'bb-scan' }); // scheduler jobs may use CRON_SECRET
+    checkSecret(req, { cron: ['scan', 'cp-check', 'cp-levels', 'bb-scan'].includes(action) }); // scheduler jobs may use CRON_SECRET
+
+    // every answer that carries the crypto paper book also updates the feed server
+    const sendBook = async (obj) => {
+      await pushLevels(obj);
+      return res.json(obj);
+    };
 
     switch (`${req.method} ${action}`) {
       case 'GET watchlist': {
@@ -184,33 +192,41 @@ export default async function handler(req, res) {
         return res.json({ ok: true, ...(await deleteHourlyCandles()) });
       case 'GET cp-book': {
         const check = await checkLiquidations().catch(() => ({ liquidated: [], exited: [], prices: {} }));
-        return res.json({ ok: true, liquidated: check.liquidated, exited: check.exited, ordersFilled: check.ordersFilled, ordersFailed: check.ordersFailed, ...(await computeBook(check.prices)) });
+        const out = { ok: true, liquidated: check.liquidated, exited: check.exited, ordersFilled: check.ordersFilled, ordersFailed: check.ordersFailed, ...(await computeBook(check.prices)) };
+        const changed = check.liquidated?.length || check.exited?.length || check.ordersFilled?.length || check.ordersFailed?.length;
+        return changed ? sendBook(out) : res.json(out); // page refreshes don't need to tell the feed server
       }
       case 'POST cp-check-now': {
         const check = await checkLiquidations({ hints: body.prices && typeof body.prices === 'object' ? body.prices : {} });
-        return res.json({ ok: true, liquidated: check.liquidated, exited: check.exited, ordersFilled: check.ordersFilled, ordersFailed: check.ordersFailed, ...(await computeBook(check.prices)) });
+        return sendBook({ ok: true, liquidated: check.liquidated, exited: check.exited, ordersFilled: check.ordersFilled, ordersFailed: check.ordersFailed, ...(await computeBook(check.prices)) });
       }
       case 'POST cp-order': {
         const r = await placeOrder({ symbol: body.symbol, side: body.side, trigger: body.trigger, amountInr: body.amountInr, leverage: body.leverage, sl: body.sl, tp: body.tp, priceHint: body.hint });
-        return res.json({ ok: true, order: r.order, ...r.book });
+        return sendBook({ ok: true, order: r.order, ...r.book });
       }
       case 'POST cp-order-cancel': {
-        return res.json({ ok: true, ...(await cancelOrder(String(body.id || ''))) });
+        return sendBook({ ok: true, ...(await cancelOrder(String(body.id || ''))) });
       }
       case 'POST cp-exit':
-        return res.json({ ok: true, ...(await setExit({ symbol: String(body.symbol || '').trim(), kind: body.kind, price: body.price, priceHint: body.hint })) });
-      case 'GET cp-check':
-        return res.json({ ok: true, ...(await checkLiquidations()) });
+        return sendBook({ ok: true, ...(await setExit({ symbol: String(body.symbol || '').trim(), kind: body.kind, price: body.price, priceHint: body.hint })) });
+      case 'GET cp-check': {
+        const check = await checkLiquidations();
+        const book = await computeBook(check.prices);
+        await pushLevels(book);
+        return res.json({ ok: true, ...check, levels: levelsOf(book) });
+      }
+      case 'GET cp-levels':
+        return res.json({ ok: true, ...levelsOf(await computeBook()) });
       case 'POST cp-trade': {
         const r = await placeTrade({ symbol: body.symbol, side: body.side, qty: body.qty, leverage: body.leverage, priceHint: body.price });
-        return res.json({ ok: true, fill: r.fill, ...r.book });
+        return sendBook({ ok: true, fill: r.fill, ...r.book });
       }
       case 'POST cp-close': {
         const r = await closePosition(String(body.symbol || '').trim(), body.price);
-        return res.json({ ok: true, fill: r.fill, ...r.book });
+        return sendBook({ ok: true, fill: r.fill, ...r.book });
       }
       case 'POST cp-reset':
-        return res.json({ ok: true, ...(await resetAccount({ capitalInr: body.capitalInr, fx: body.fx, closeOpen: body.closeOpen === true, prices: body.prices && typeof body.prices === 'object' ? body.prices : {} })) });
+        return sendBook({ ok: true, ...(await resetAccount({ capitalInr: body.capitalInr, fx: body.fx, closeOpen: body.closeOpen === true, prices: body.prices && typeof body.prices === 'object' ? body.prices : {} })) });
       case 'GET binance':
         return res.json({ ok: true, data: await proxy(String(req.query?.path || ''), String(req.query?.q || '')) });
       default:
