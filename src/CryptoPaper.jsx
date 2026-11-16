@@ -454,7 +454,7 @@ function OrdersCard({ book, prices, inr, cb, onNotice }) {
         </div>
       )}
       <div className="foot">
-        Checked every few seconds while a Crypto page is open, and every minute by the server (it also looks at 1-minute candles, so a quick wick through your price counts). Buy-the-dip / sell-the-rally orders fill at your price; breakout orders (buy above / sell below) fill at the market price if it has jumped past.
+        Checked every few seconds while a Crypto page is open, and by the server on its schedule (it looks back at the last hour of 1-minute candles, so a wick through your price between checks still counts — same for stop loss, take profit and liquidation). Buy-the-dip / sell-the-rally orders fill at your price; breakout orders (buy above / sell below) fill at the market price if it has jumped past.
       </div>
     </section>
   );
