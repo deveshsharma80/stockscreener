@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { fmtPrice, lastPrices } from './binance.js';
 
 // Floating crypto trade box (like the NSE Market one): Buy / Sell switch,
-// leverage 1–10×, how much of your money to use (slider or ₹), and either a
+// leverage 1–125× (presets or type it), how much of your money to use (slider or ₹), and either a
 // market order or an order "at price" that the app places automatically when
 // the coin reaches your price (optional stop loss / take profit).
 // Drag it by its title bar; its position is remembered on this device.
@@ -10,6 +10,7 @@ import { fmtPrice, lastPrices } from './binance.js';
 const POS_KEY = 'stockhits.cryptoTradePos';
 const LEV_KEY = 'stockhits.cpLev';
 const W = 380;
+const LEV_PRESETS = [1, 2, 3, 5, 10, 20, 25, 30, 50, 75, 100];
 const coin = (s) => s.replace(/USDT$/, '');
 const qtyFmt = (q) => (q == null ? '—' : Math.abs(q).toLocaleString('en-US', { maximumSignificantDigits: 8 }));
 const readPos = () => {
@@ -27,7 +28,7 @@ const clamp = (p, el) => {
 const readLev = () => {
   try {
     const v = Number(localStorage.getItem(LEV_KEY));
-    return v >= 1 && v <= 10 ? v : 3;
+    return v >= 1 && v <= 125 ? Math.round(v) : 3;
   } catch {
     return 3;
   }
@@ -52,7 +53,8 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
 
   const fx = book?.fx || 85;
   const feeRate = book?.feeRate ?? 0.0005;
-  const maxLev = book?.maxLeverage || 10;
+  const maxLev = book?.maxLeverage || 125;
+  const [levText, setLevText] = useState(null); // what is typed in the leverage box
   const inr = (usdt, signed = false) => {
     if (usdt == null || !Number.isFinite(usdt)) return '—';
     const v = usdt * fx;
@@ -132,8 +134,13 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
   useEffect(() => {
     const on = () => setPos((p) => clamp(p, box.current));
     window.addEventListener('resize', on);
+    const ro = typeof ResizeObserver !== 'undefined' && box.current ? new ResizeObserver(on) : null;
+    ro?.observe(box.current); // e.g. switching to "At price" makes the box taller
     on();
-    return () => window.removeEventListener('resize', on);
+    return () => {
+      window.removeEventListener('resize', on);
+      ro?.disconnect();
+    };
   }, []);
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -310,13 +317,40 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
             {adding && !atPrice && <span className="muted-cell">fixed while the {held.side.toLowerCase()} is open</span>}
             {adding && atPrice && <span className="muted-cell">adds to your {held.side.toLowerCase()} at its {held.leverage}×</span>}
           </div>
-          <div className="ct-levs" role="radiogroup" aria-label="Leverage">
-            {Array.from({ length: maxLev }, (_, i) => i + 1).map((v) => (
-              <button type="button" key={v} role="radio" aria-checked={(atPrice ? lev : useLev) === v} className={(atPrice ? lev : useLev) === v ? 'on' : ''} disabled={adding && !atPrice} onClick={() => setLev(v)}>
-                {v}×
-              </button>
-            ))}
+          <div className="ct-levrow">
+            <div className="ct-levs" role="radiogroup" aria-label="Leverage presets">
+              {LEV_PRESETS.filter((v) => v <= maxLev).map((v) => (
+                <button type="button" key={v} role="radio" aria-checked={(atPrice ? lev : useLev) === v} className={(atPrice ? lev : useLev) === v ? 'on' : ''} disabled={adding && !atPrice} onClick={() => (setLev(v), setLevText(null))}>
+                  {v}×
+                </button>
+              ))}
+            </div>
+            <label className="ct-levin" title={`Any whole number from 1 to ${maxLev}`}>
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max={maxLev}
+                step="1"
+                value={levText ?? String((atPrice ? lev : useLev))}
+                disabled={adding && !atPrice}
+                onChange={(e) => {
+                  setLevText(e.target.value);
+                  const v = Math.round(Number(e.target.value));
+                  if (v >= 1 && v <= maxLev) setLev(v);
+                }}
+                onBlur={() => setLevText(null)}
+                aria-label="Leverage"
+              />
+              <b>×</b>
+            </label>
           </div>
+          {levText != null && !(Math.round(Number(levText)) >= 1 && Math.round(Number(levText)) <= maxLev) && <span className="ct-levbad">Leverage must be 1× to {maxLev}×</span>}
+          {(atPrice ? lev : useLev) >= 25 && (
+            <span className="ct-levwarn">
+              At {(atPrice ? lev : useLev)}× a {(100 / (atPrice ? lev : useLev)).toFixed(1)}% move against you liquidates the trade (a little sooner on the real exchange).
+            </span>
+          )}
         </div>
 
         <div className="qt-deploy">

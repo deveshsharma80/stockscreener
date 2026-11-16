@@ -5,7 +5,7 @@ import { cryptoApi } from './Crypto.jsx';
 import { anyHit, useCryptoBook, watchedSymbols } from './cryptoBook.js';
 import CryptoTrade from './CryptoTrade.jsx';
 
-// Crypto paper trading (Binance-Futures style): long / short with 1–10× leverage,
+// Crypto paper trading (Binance-Futures style): long / short with 1–125× leverage,
 // 0.05 % fee per side, liquidation when the margin is used up. Money is entered
 // and shown in rupees at the account's fixed rate (₹85 per USDT by default);
 // coin prices stay in USDT. The book lives on the server (/api/crypto cp-*).

@@ -1165,10 +1165,25 @@ a.btn.cp-chart-trade { text-decoration: none; display: inline-flex; align-items:
 .cp-table th { font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 
 /* Crypto trade box (extends the .qt box) */
-.qt.ct { width: 380px; }
+.qt.ct { width: 380px; max-width: calc(100vw - 16px); box-sizing: border-box; }
+.qt.ct, .qt.ct * { min-width: 0; }
+.qt.ct .qt-body { overflow-x: hidden; }
+.qt.ct .qt-row { flex-wrap: wrap; }
+.qt.ct .ct-amt input { width: 110px; max-width: 100%; }
+.qt.ct .ct-mode button { min-width: 0; }
+.qt.ct .ct-sltp input, .qt.ct .ct-trig-main input { width: 100%; box-sizing: border-box; }
+.qt.ct .ct-trig-note { overflow-wrap: anywhere; }
 .ct-amt input { width: 130px; }
 .ct-lev { display: grid; gap: 6px; }
-.ct-levs { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
+.ct-levrow { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.ct-levs { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; min-width: 0; }
+.ct-levs button { min-width: 40px; padding: 4px 6px !important; }
+.ct-levin { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--muted); }
+.ct-levin input { width: 62px; height: 30px; box-sizing: border-box; font: inherit; font-family: var(--mono); font-size: 14px; font-weight: 700; padding: 0 6px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg); color: var(--text); text-align: right; }
+.ct-levin input:focus { outline: none; border-color: #2563eb; }
+.ct-levbad { font-size: 12px; color: var(--danger); }
+.ct-levwarn { font-size: 12px; color: #b45309; line-height: 1.35; }
+@media (prefers-color-scheme: dark) { .ct-levwarn { color: #fbbf24; } }
 .ct-levs button { font: inherit; font-size: 12.5px; font-weight: 600; padding: 4px 0; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
 .ct-levs button.on { color: #fff; background: #2563eb; border-color: #2563eb; }
 .ct-levs button:hover:not(:disabled):not(.on) { border-color: #2563eb; color: var(--text); }
