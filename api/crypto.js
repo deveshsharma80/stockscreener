@@ -35,7 +35,7 @@
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
-import { cancelOrder, checkLiquidations, closePosition, computeBook, placeOrder, placeTrade, resetAccount, setExit } from '../lib/cryptopaper.js';
+import { cancelOrder, checkLiquidations, closePosition, computeBook, parseSeen, placeOrder, placeTrade, resetAccount, setExit } from '../lib/cryptopaper.js';
 import { readBBScan, runBBScan } from '../lib/bbscan.js';
 import { levelsOf, pushLevels } from '../lib/feed.js';
 import { candleStatus, coinCandles, deleteAllCandles, deleteHourlyCandles, pruneCandles, saveCandles, scanCandles } from '../lib/candles.js';
@@ -210,7 +210,7 @@ export default async function handler(req, res) {
       case 'POST cp-exit':
         return sendBook({ ok: true, ...(await setExit({ symbol: String(body.symbol || '').trim(), kind: body.kind, price: body.price, priceHint: body.hint })) });
       case 'GET cp-check': {
-        const check = await checkLiquidations();
+        const check = await checkLiquidations({ seen: parseSeen(req.query?.seen) }); // seen = trades the feed server watched
         const book = await computeBook(check.prices);
         await pushLevels(book);
         return res.json({ ok: true, ...check, levels: levelsOf(book) });

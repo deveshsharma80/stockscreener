@@ -98,7 +98,14 @@ async function runJob(name, why = 'schedule') {
     return { ok: true, text: 'already running — will run again right after' };
   }
   st.running = true;
-  const r = await callApp(job.path);
+  let path = job.path;
+  let sent = [];
+  if (name === 'cp-check') {
+    sent = Object.keys(seenHits);
+    if (sent.length) path += `&seen=${encodeURIComponent(sent.map((s) => `${s}:${seenHits[s].price}:${seenHits[s].at}`).join(','))}`;
+  }
+  const r = await callApp(path);
+  if (r.ok) for (const s of sent) delete seenHits[s]; // keep them for the next try if the check failed
   st.running = false;
   st.count++;
   if (!r.ok) st.fails++;
@@ -186,6 +193,7 @@ const sockets = { fut: null, spot: null };
 let wsInfo = { state: 'idle', lastMsg: null, since: null, reconnects: 0, url: { fut: '', spot: '' } };
 const events = []; // recent triggers, newest first
 let lastFire = 0;
+const seenHits = {}; // symbol → { price, at } of the trade that reached a level (sent with the check)
 
 async function loadPerps() {
   try {
@@ -212,6 +220,7 @@ function onTick(symbol, price) {
   }
   const hits = hitsFor(symbol, price);
   if (!hits.length) return;
+  if (!seenHits[symbol]) seenHits[symbol] = { price, at: Date.now() }; // the first trade that reached it
   if (Date.now() - lastFire < 8_000) return; // one check at a time; a check covers every coin
   lastFire = Date.now();
   events.unshift({ at: Date.now(), price, hits });
