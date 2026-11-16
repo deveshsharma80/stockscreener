@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SECRET_KEY, store } from './Ticker.jsx';
 import { fmtPrice, lastPrices } from './binance.js';
-import { triggerHit, useCryptoBook } from './cryptoBook.js';
+import { anyHit, useCryptoBook, watchedSymbols } from './cryptoBook.js';
 
 // Running P&L pill on every Crypto page (like the NSE Market one). Clicking it
 // opens a panel with each open crypto paper position, live P&L and an Exit
@@ -29,10 +29,10 @@ export default function CryptoLivePnl() {
   const [msg, setMsg] = useState(null);
 
   const positions = book?.positions || [];
-  const keys = positions.map((p) => p.symbol).join(',');
+  const keys = watchedSymbols(book).join(','); // positions + open trigger orders
   const asked = useRef(0);
-  const posRef = useRef(positions);
-  posRef.current = positions;
+  const bookRef = useRef(book);
+  bookRef.current = book;
 
   useEffect(() => {
     if (!secret || !keys) return;
@@ -43,7 +43,7 @@ export default function CryptoLivePnl() {
         const p = await lastPrices(keys.split(',')).catch(() => ({}));
         if (!alive) return;
         setPrices((x) => ({ ...x, ...p }));
-        if (posRef.current.some((pos) => triggerHit(pos, p[pos.symbol])) && Date.now() - asked.current > 10_000) {
+        if (anyHit(bookRef.current, p) && Date.now() - asked.current > 10_000) {
           asked.current = Date.now();
           cb.checkNow(p).catch(() => {});
         }

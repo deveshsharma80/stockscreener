@@ -1382,3 +1382,23 @@ a.btn.cp-chart-trade { text-decoration: none; display: inline-flex; align-items:
 .bbs-forming { display: inline-block; margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: 5px; background: var(--warn-bg, #fef3c7); color: var(--warn, #92400e); vertical-align: 1px; }
 .bbs-table td.jr-day { white-space: nowrap; }
 @media (max-width: 520px) { .stat-value.bbs-split { font-size: 18px; } .bbs-controls { padding: 0 14px 14px; } }
+
+/* ---------- Crypto trigger orders ---------- */
+.ct-mode { display: flex; width: 100%; margin-bottom: 10px; }
+.ct-mode button { flex: 1; }
+.ct-trig { display: flex; flex-direction: column; gap: 8px; padding: 10px; margin-bottom: 10px; border: 1px dashed var(--border); border-radius: 10px; background: var(--surface-2); }
+.ct-trig label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.ct-trig input { height: 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 15px; font-weight: 600; padding: 0 10px; font-variant-numeric: tabular-nums; min-width: 0; }
+.ct-trig-note { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.ct-trig-note i { font-style: normal; padding: 0 6px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border); }
+.ct-sltp { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cp-count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12px; text-align: center; vertical-align: 2px; }
+.cp-ord-when { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.cp-ord-when b { color: var(--text); }
+.cp-ord-done { padding: 10px 16px; border-top: 1px solid var(--border); }
+.cp-ord-why { font-size: 12px; max-width: 360px; white-space: normal; }
+.link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; font-weight: 600; }
+.ind-tag.cp-ord, .ind-tag.cp-ost-filled { background: #dbeafe; color: #1e40af; }
+.ind-tag.cp-ost-cancelled { background: var(--surface-2); color: var(--muted); }
+.ind-tag.cp-ost-failed { background: #fee2e2; color: #991b1b; }
+@media (prefers-color-scheme: dark) { .ind-tag.cp-ord, .ind-tag.cp-ost-filled { background: #1e3a8a; color: #dbeafe; } .ind-tag.cp-ost-failed { background: #7f1d1d; color: #fee2e2; } }

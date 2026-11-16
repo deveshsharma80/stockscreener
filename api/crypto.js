@@ -24,7 +24,9 @@
 //                                            closeOpen closes open positions at market first)
 // POST {action:"cp-exit", symbol, kind:"SL"|"TP", price|null, hint?}   set / clear stop loss or take profit
 // POST {action:"cp-check-now", prices?}      check liquidations / SL / TP now (page prices only fill gaps)
-// GET  ?action=cp-check                      liquidation + SL/TP check (for a scheduler; accepts CRON_SECRET)
+// GET  ?action=cp-check                      liquidation + SL/TP + trigger-order check (for a scheduler; accepts CRON_SECRET)
+// POST {action:"cp-order", symbol, side, trigger, amountInr, leverage, sl?, tp?, hint?}   trade automatically at a price
+// POST {action:"cp-order-cancel", id}        cancel an open trigger order
 // GET  ?action=binance&path=/api/v3/klines&q=<query>
 //      fallback proxy for Binance public market data, used only if the
 //      browser can't reach Binance directly. Binance blocks some US servers;
@@ -32,7 +34,7 @@
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { DEFAULT_COINS, MAX_COINS, readHits, runDailyScan } from '../lib/cryptoscan.js';
-import { checkLiquidations, closePosition, computeBook, placeTrade, resetAccount, setExit } from '../lib/cryptopaper.js';
+import { cancelOrder, checkLiquidations, closePosition, computeBook, placeOrder, placeTrade, resetAccount, setExit } from '../lib/cryptopaper.js';
 import { readBBScan, runBBScan } from '../lib/bbscan.js';
 import { candleStatus, coinCandles, deleteAllCandles, deleteHourlyCandles, pruneCandles, saveCandles, scanCandles } from '../lib/candles.js';
 
@@ -182,11 +184,18 @@ export default async function handler(req, res) {
         return res.json({ ok: true, ...(await deleteHourlyCandles()) });
       case 'GET cp-book': {
         const check = await checkLiquidations().catch(() => ({ liquidated: [], exited: [], prices: {} }));
-        return res.json({ ok: true, liquidated: check.liquidated, exited: check.exited, ...(await computeBook(check.prices)) });
+        return res.json({ ok: true, liquidated: check.liquidated, exited: check.exited, ordersFilled: check.ordersFilled, ordersFailed: check.ordersFailed, ...(await computeBook(check.prices)) });
       }
       case 'POST cp-check-now': {
         const check = await checkLiquidations({ hints: body.prices && typeof body.prices === 'object' ? body.prices : {} });
-        return res.json({ ok: true, liquidated: check.liquidated, exited: check.exited, ...(await computeBook(check.prices)) });
+        return res.json({ ok: true, liquidated: check.liquidated, exited: check.exited, ordersFilled: check.ordersFilled, ordersFailed: check.ordersFailed, ...(await computeBook(check.prices)) });
+      }
+      case 'POST cp-order': {
+        const r = await placeOrder({ symbol: body.symbol, side: body.side, trigger: body.trigger, amountInr: body.amountInr, leverage: body.leverage, sl: body.sl, tp: body.tp, priceHint: body.hint });
+        return res.json({ ok: true, order: r.order, ...r.book });
+      }
+      case 'POST cp-order-cancel': {
+        return res.json({ ok: true, ...(await cancelOrder(String(body.id || ''))) });
       }
       case 'POST cp-exit':
         return res.json({ ok: true, ...(await setExit({ symbol: String(body.symbol || '').trim(), kind: body.kind, price: body.price, priceHint: body.hint })) });

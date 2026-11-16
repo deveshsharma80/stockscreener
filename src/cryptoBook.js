@@ -32,6 +32,7 @@ export function useCryptoBook(secret, { autoload = true } = {}) {
   const [error, setError] = useState('');
   const [liquidated, setLiquidated] = useState([]);
   const [exited, setExited] = useState([]); // stop losses / take profits that fired
+  const [orderNews, setOrderNews] = useState([]); // trigger orders filled / failed
 
   useEffect(() => {
     const on = (e) => setBook(e.detail);
@@ -45,6 +46,7 @@ export function useCryptoBook(secret, { autoload = true } = {}) {
       const j = await call(secret, 'cp-book');
       if (j.liquidated?.length) setLiquidated(j.liquidated);
       if (j.exited?.length) setExited(j.exited);
+      if (j.ordersFilled?.length || j.ordersFailed?.length) setOrderNews([...(j.ordersFilled || []), ...(j.ordersFailed || [])]);
       publish(j);
       setError('');
       return j;
@@ -77,13 +79,26 @@ export function useCryptoBook(secret, { autoload = true } = {}) {
       const j = await call(secret, 'cp-check-now', { method: 'POST', body: { prices } });
       if (j.liquidated?.length) setLiquidated(j.liquidated);
       if (j.exited?.length) setExited(j.exited);
+      if (j.ordersFilled?.length || j.ordersFailed?.length) setOrderNews([...(j.ordersFilled || []), ...(j.ordersFailed || [])]);
       publish(j);
       return j;
     },
     [secret]
   );
 
-  return { book, error, liquidated, clearLiquidated: () => setLiquidated([]), exited, clearExited: () => setExited([]), load, post, checkNow };
+  return {
+    book,
+    error,
+    liquidated,
+    clearLiquidated: () => setLiquidated([]),
+    exited,
+    clearExited: () => setExited([]),
+    orderNews,
+    clearOrderNews: () => setOrderNews([]),
+    load,
+    post,
+    checkNow,
+  };
 }
 
 /** True if this price has reached a position's liquidation, stop loss or take profit. */
@@ -95,3 +110,13 @@ export function triggerHit(pos, price) {
   if (pos.tp != null && (long ? price >= pos.tp : price <= pos.tp)) return true;
   return false;
 }
+
+/** True if this price has reached a trigger order's level. */
+export const orderHit = (o, price) => price > 0 && o?.status === 'open' && (o.cond === 'above' ? price >= o.trigger : price <= o.trigger);
+
+/** Coins the page should watch: open positions and open trigger orders. */
+export const watchedSymbols = (book) => [...new Set([...(book?.positions || []).map((p) => p.symbol), ...(book?.orders || []).map((o) => o.symbol)])];
+
+/** True if any position or order needs the server to check now. */
+export const anyHit = (book, prices) =>
+  (book?.positions || []).some((pos) => triggerHit(pos, prices[pos.symbol])) || (book?.orders || []).some((o) => orderHit(o, prices[o.symbol]));

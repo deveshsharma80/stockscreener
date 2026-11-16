@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SECRET_KEY, SecretGate, store } from './Ticker.jsx';
 import { fmtPrice, lastPrices, useProxy } from './binance.js';
 import { cryptoApi } from './Crypto.jsx';
-import { triggerHit, useCryptoBook } from './cryptoBook.js';
+import { anyHit, useCryptoBook, watchedSymbols } from './cryptoBook.js';
 import CryptoTrade from './CryptoTrade.jsx';
 
 // Crypto paper trading (Binance-Futures style): long / short with 1–10× leverage,
@@ -93,6 +93,18 @@ function Liquidations({ cb }) {
           <button className="icon-btn" onClick={cb.clearLiquidated} aria-label="Dismiss">×</button>
         </p>
       )}
+      {cb.orderNews.length > 0 && (
+        <p className={`status ${cb.orderNews.some((o) => o.error) ? 'err' : 'ok'} cp-notice`}>
+          {cb.orderNews
+            .map((o) =>
+              o.error
+                ? `Order not filled: ${coin(o.symbol)} ${o.side === 'BUY' ? 'buy' : 'sell'} at ${fmtPrice(o.trigger)} — ${o.error}`
+                : `Order filled: ${o.side === 'BUY' ? 'bought' : 'sold'} ${qtyFmt(o.qty)} ${coin(o.symbol)} at ${fmtPrice(o.price)} (${o.leverage}×)${o.note ? ` · ${o.note}` : ''}`
+            )
+            .join(' · ')}{' '}
+          <button className="icon-btn" onClick={cb.clearOrderNews} aria-label="Dismiss">×</button>
+        </p>
+      )}
       {cb.exited.length > 0 && (
         <p className="status ok cp-notice">
           {cb.exited.map((x) => `${x.kind === 'SL' ? 'Stop loss' : 'Take profit'} hit: ${coin(x.symbol)} ${x.side.toLowerCase()} closed at ${fmtPrice(x.price)} (level ${fmtPrice(x.level)})`).join(' · ')}.{' '}
@@ -106,9 +118,11 @@ function Liquidations({ cb }) {
 /** Live prices for the open positions; asks the server to check when a liquidation / SL / TP price is reached. */
 function useLivePrices(book, checkNow, extra = []) {
   const [prices, setPrices] = useState({});
-  const syms = [...new Set([...(book?.positions || []).map((p) => p.symbol), ...extra].filter(Boolean))];
+  const syms = [...new Set([...watchedSymbols(book), ...extra].filter(Boolean))];
   const key = syms.join(',');
   const asked = useRef(0);
+  const bookRef = useRef(book);
+  bookRef.current = book;
   useEffect(() => {
     if (!syms.length) return;
     let alive = true;
@@ -118,7 +132,7 @@ function useLivePrices(book, checkNow, extra = []) {
         const p = await lastPrices(syms).catch(() => ({}));
         if (!alive) return;
         setPrices((x) => ({ ...x, ...p }));
-        const crossed = (book?.positions || []).some((pos) => triggerHit(pos, p[pos.symbol]));
+        const crossed = anyHit(bookRef.current, p);
         if (crossed && Date.now() - asked.current > 10_000) {
           asked.current = Date.now();
           checkNow(p).catch(() => {});
@@ -315,8 +329,134 @@ function PositionsPage({ secret }) {
           Prices: Binance last price (perpetual, else spot), refreshed every 3 s · liquidation when the loss reaches the margin · fee {(book.feeRate * 100).toFixed(2)}% per side
         </div>
       </section>
+      <OrdersCard book={book} prices={prices} inr={inr} cb={cb} onNotice={setNotice} />
       {tradeSym && <CryptoTrade symbol={tradeSym} book={book} post={cb.post} onClose={() => setTradeSym(null)} />}
     </>
+  );
+}
+
+const STATUS_LABEL = { filled: 'Filled', cancelled: 'Cancelled', failed: 'Not filled' };
+
+/** Trigger ("at price") orders: waiting ones with Cancel, and the latest finished ones. */
+function OrdersCard({ book, prices, inr, cb, onNotice }) {
+  const [busy, setBusy] = useState('');
+  const [showDone, setShowDone] = useState(false);
+  const open = book.orders || [];
+  const done = book.orderHistory || [];
+  const cancel = async (o) => {
+    setBusy(o.id);
+    try {
+      await cb.post('cp-order-cancel', { id: o.id });
+      onNotice({ kind: 'ok', text: `Cancelled the ${coin(o.symbol)} ${o.side === 'BUY' ? 'buy' : 'sell'} order at ${fmtPrice(o.trigger)}.` });
+    } catch (e) {
+      onNotice({ kind: 'err', text: e.message });
+    } finally {
+      setBusy('');
+    }
+  };
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2>Orders at a price {open.length > 0 && <span className="cp-count">{open.length}</span>}</h2>
+        <span className="muted-cell">Set them from the Trade box → “At price”</span>
+      </div>
+      {!open.length ? (
+        <div className="empty">No waiting orders. In the Trade box choose <b>At price</b> to buy or sell automatically when a coin reaches your price.</div>
+      ) : (
+        <div className="table-wrap">
+          <table className="ticker cp-table cp-ord-table">
+            <thead>
+              <tr>
+                <th>Coin</th>
+                <th>Order</th>
+                <th className="num">Price now</th>
+                <th className="num">To go</th>
+                <th className="num">Amount</th>
+                <th className="num">SL / TP</th>
+                <th />
+                <th>Set</th>
+              </tr>
+            </thead>
+            <tbody>
+              {open.map((o) => {
+                const now = prices[o.symbol];
+                const away = now > 0 ? ((o.trigger - now) / now) * 100 : null;
+                return (
+                  <tr key={o.id}>
+                    <td className="tk-inst cp-coin">
+                      <div className="tk-name"><a className="link" href={`#/crypto/chart?s=${o.symbol}`}>{coin(o.symbol)}</a></div>
+                    </td>
+                    <td>
+                      <span className={`cp-side ${o.side === 'BUY' ? 'long' : 'short'}`}>{o.side === 'BUY' ? 'Buy / Long' : 'Sell / Short'} {o.leverage}×</span>
+                      <div className="mono cp-ord-when">when price {o.cond === 'above' ? '≥' : '≤'} <b>{fmtPrice(o.trigger)}</b></div>
+                    </td>
+                    <td className="num mono">{now > 0 ? fmtPrice(now) : '…'}</td>
+                    <td className="num mono">{away == null ? '—' : `${away > 0 ? '+' : ''}${away.toFixed(2)}%`}</td>
+                    <td className="num mono">
+                      ₹{Number(o.amountInr).toLocaleString('en-IN')}
+                      <div className="muted-cell">size {inr((o.amountInr / book.fx) * o.leverage)}</div>
+                    </td>
+                    <td className="num mono cp-sltp">
+                      <div className="sl">{o.sl != null ? `SL ${fmtPrice(o.sl)}` : '—'}</div>
+                      <div className="tp">{o.tp != null ? `TP ${fmtPrice(o.tp)}` : '—'}</div>
+                    </td>
+                    <td className="lp-act">
+                      {o.status === 'filling' ? (
+                        <span className="muted-cell">Filling…</span>
+                      ) : (
+                        <button className="btn btn-close" disabled={busy === o.id} onClick={() => cancel(o)}>{busy === o.id ? 'Cancelling…' : 'Cancel'}</button>
+                      )}
+                    </td>
+                    <td className="muted-cell cp-opened">{when(o.createdAt)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {done.length > 0 && (
+        <div className="cp-ord-done">
+          <button className="link-btn" onClick={() => setShowDone((v) => !v)}>
+            {showDone ? '▾' : '▸'} Finished orders ({done.length})
+          </button>
+          {showDone && (
+            <div className="table-wrap">
+              <table className="ticker cp-table">
+                <thead>
+                  <tr>
+                    <th>Coin</th>
+                    <th>Order</th>
+                    <th>Result</th>
+                    <th className="num">Filled at</th>
+                    <th>When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {done.map((o) => (
+                    <tr key={o.id}>
+                      <td className="mono"><b>{coin(o.symbol)}</b></td>
+                      <td className="mono">
+                        {o.side === 'BUY' ? 'Buy' : 'Sell'} {o.leverage}× · ₹{Number(o.amountInr).toLocaleString('en-IN')} · {o.cond === 'above' ? '≥' : '≤'} {fmtPrice(o.trigger)}
+                      </td>
+                      <td>
+                        <span className={`ind-tag cp-ost-${o.status}`}>{STATUS_LABEL[o.status] || o.status}</span>
+                        {(o.error || o.note) && <div className="muted-cell cp-ord-why">{o.error || o.note}</div>}
+                      </td>
+                      <td className="num mono">{o.fillPrice ? fmtPrice(o.fillPrice) : '—'}</td>
+                      <td className="muted-cell">{when(o.doneAt || o.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="foot">
+        Checked every few seconds while a Crypto page is open, and every minute by the server (it also looks at 1-minute candles, so a quick wick through your price counts). Buy-the-dip / sell-the-rally orders fill at your price; breakout orders (buy above / sell below) fill at the market price if it has jumped past.
+      </div>
+    </section>
   );
 }
 
@@ -626,6 +766,7 @@ function Fills({ book }) {
                   <td>
                     <span className={`cp-side ${f.side === 'BUY' ? 'long' : 'short'}`}>{f.side === 'BUY' ? 'Buy' : 'Sell'} {f.leverage}×</span>
                     {f.kind === 'liquidation' && <span className="ind-tag cp-liq">Liquidation</span>}
+                    {f.kind === 'order' && <span className="ind-tag cp-ord" title={f.trigger ? `Order price ${fmtPrice(f.trigger)}` : undefined}>At price</span>}
                     {(f.kind === 'sl' || f.kind === 'tp') && <span className={`ind-tag cp-${f.kind}`}>{f.kind === 'sl' ? 'Stop loss' : 'Take profit'}</span>}
                   </td>
                   <td className="num mono">{qtyFmt(f.qty)}</td>

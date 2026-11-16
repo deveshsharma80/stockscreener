@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { fmtPrice, lastPrices } from './binance.js';
 
 // Floating crypto trade box (like the NSE Market one): Buy / Sell switch,
-// leverage 1–10×, how much of your money to use (slider or ₹), market order.
+// leverage 1–10×, how much of your money to use (slider or ₹), and either a
+// market order or an order "at price" that the app places automatically when
+// the coin reaches your price (optional stop loss / take profit).
 // Drag it by its title bar; its position is remembered on this device.
 
 const POS_KEY = 'stockhits.cryptoTradePos';
@@ -42,6 +44,10 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
   const [closeAll, setCloseAll] = useState(false);
   const [price, setPrice] = useState(null);
   const [status, setStatus] = useState(null); // { kind, text }
+  const [mode, setMode] = useState('market'); // 'market' | 'price'
+  const [trigger, setTrigger] = useState('');
+  const [sl, setSl] = useState('');
+  const [tp, setTp] = useState('');
   const busy = status?.kind === 'busy';
 
   const fx = book?.fx || 85;
@@ -76,7 +82,18 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
     setDeploy(null);
     setCloseAll(false);
     setStatus(null);
+    setTrigger('');
+    setSl('');
+    setTp('');
   }, [symbol]);
+
+  const atPrice = mode === 'price';
+  const trig = Number(trigger);
+  const trigOk = atPrice && trig > 0;
+  // the price everything below is worked out at: your order price, or the live price
+  const px = atPrice ? (trigOk ? trig : null) : price;
+  const cond = trigOk && price > 0 ? (trig > price ? 'above' : trig < price ? 'below' : null) : null;
+  const orderKind = cond ? ((side === 'BUY') === (cond === 'below') ? (side === 'BUY' ? 'buy the dip' : 'sell the rally') : 'breakout') : null;
 
   const held = book?.positions?.find((p) => p.symbol === symbol) || null;
   const adding = held && (side === 'BUY') === held.qty > 0;
@@ -87,12 +104,13 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
   // Money: available now (live P&L of other positions is checked by the server again)
   const avail = book ? Math.max(0, book.totals.available) + (reducing ? held.margin : 0) : null;
   const margin = Number(amount) / fx; // USDT
-  const qty = closeAll && reducing ? Math.abs(held.qty) : price > 0 && margin > 0 ? (margin * sizeLev) / price : 0;
-  const notional = price > 0 ? qty * price : 0;
+  const qty = closeAll && reducing && !atPrice ? Math.abs(held.qty) : px > 0 && margin > 0 ? (margin * (atPrice ? lev : sizeLev)) / px : 0;
+  const notional = px > 0 ? qty * px : 0;
   const fee = notional * feeRate;
-  const liq = price > 0 && !reducing ? (side === 'BUY' ? price * (1 - 1 / useLev) : price * (1 + 1 / useLev)) : null;
-  const opening = reducing ? Math.max(0, qty - Math.abs(held.qty)) : qty;
-  const need = price > 0 ? (opening * price) / useLev + fee : 0;
+  const levNow = atPrice ? lev : useLev;
+  const liq = px > 0 && (atPrice || !reducing) ? (side === 'BUY' ? px * (1 - 1 / levNow) : px * (1 + 1 / levNow)) : null;
+  const opening = reducing && !atPrice ? Math.max(0, qty - Math.abs(held.qty)) : qty;
+  const need = px > 0 ? (opening * px) / levNow + fee : 0;
   const short = avail != null && opening > 0 && need > avail + 1e-9;
 
   const usedPct = avail > 0 && margin > 0 ? Math.min(100, Math.round((margin / avail) * 100)) : 0;
@@ -146,6 +164,34 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (atPrice) {
+      if (!(qty > 0) || busy || short || !book || !cond) return;
+      setStatus({ kind: 'busy', text: 'Setting order…' });
+      try {
+        const j = await post('cp-order', {
+          symbol,
+          side,
+          trigger: trig,
+          amountInr: Number(amount),
+          leverage: lev,
+          sl: sl === '' ? null : Number(sl),
+          tp: tp === '' ? null : Number(tp),
+          hint: price,
+        });
+        const o = j.order;
+        setStatus({
+          kind: 'ok',
+          text: `Order set: ${o.side === 'BUY' ? 'buy / long' : 'sell / short'} ${coin(symbol)} with ₹${o.amountInr.toLocaleString('en-IN')} at ${o.leverage}× when the price ${o.cond === 'above' ? 'rises to' : 'falls to'} ${fmtPrice(o.trigger)}${o.sl != null ? ` · SL ${fmtPrice(o.sl)}` : ''}${o.tp != null ? ` · TP ${fmtPrice(o.tp)}` : ''}. See it under Crypto → Positions.`,
+        });
+        setAmount('');
+        setDeploy(null);
+        setSl('');
+        setTp('');
+      } catch (err) {
+        setStatus({ kind: 'err', text: err.message });
+      }
+      return;
+    }
     if (!(qty > 0) || busy || short || !book) return;
     setStatus({ kind: 'busy', text: 'Placing…' });
     try {
@@ -183,6 +229,53 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
       </div>
 
       <div className="qt-body">
+        <div className="seg ct-mode" role="group" aria-label="Order type">
+          <button type="button" className={!atPrice ? 'on' : ''} onClick={() => (setMode('market'), setStatus(null))}>Market</button>
+          <button
+            type="button"
+            className={atPrice ? 'on' : ''}
+            onClick={() => {
+              setMode('price');
+              setStatus(null);
+              setCloseAll(false);
+              if (!trigger && price > 0) setTrigger(String(price));
+            }}
+          >
+            At price
+          </button>
+        </div>
+
+        {atPrice && (
+          <div className="ct-trig">
+            <label className="ct-trig-main">
+              <span>{side === 'BUY' ? 'Buy' : 'Sell'} when price reaches</span>
+              <input type="number" inputMode="decimal" min="0" step="any" value={trigger} onChange={(e) => (setTrigger(e.target.value), setStatus(null))} placeholder="price" aria-label="Order price" />
+            </label>
+            <div className="ct-trig-note">
+              {!trigOk ? (
+                'Enter the price.'
+              ) : !cond ? (
+                'That is the current price — use Market instead.'
+              ) : (
+                <>
+                  Fires when the price {cond === 'above' ? 'rises to' : 'falls to'} <b className="mono">{fmtPrice(trig)}</b>
+                  {price > 0 && <> ({((trig / price - 1) * 100).toFixed(2)}% from {fmtPrice(price)})</>} · <i>{orderKind}</i>
+                </>
+              )}
+            </div>
+            <div className="ct-sltp">
+              <label>
+                <span>Stop loss</span>
+                <input type="number" inputMode="decimal" min="0" step="any" value={sl} onChange={(e) => setSl(e.target.value)} placeholder="optional" aria-label="Stop loss" />
+              </label>
+              <label>
+                <span>Take profit</span>
+                <input type="number" inputMode="decimal" min="0" step="any" value={tp} onChange={(e) => setTp(e.target.value)} placeholder="optional" aria-label="Take profit" />
+              </label>
+            </div>
+          </div>
+        )}
+
         <div className="qt-row">
           <button
             type="button"
@@ -213,12 +306,13 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
 
         <div className="ct-lev">
           <div className="qt-deploy-top">
-            <span>Leverage <b>{useLev}×</b></span>
-            {adding && <span className="muted-cell">fixed while the {held.side.toLowerCase()} is open</span>}
+            <span>Leverage <b>{atPrice ? lev : useLev}×</b></span>
+            {adding && !atPrice && <span className="muted-cell">fixed while the {held.side.toLowerCase()} is open</span>}
+            {adding && atPrice && <span className="muted-cell">adds to your {held.side.toLowerCase()} at its {held.leverage}×</span>}
           </div>
           <div className="ct-levs" role="radiogroup" aria-label="Leverage">
             {Array.from({ length: maxLev }, (_, i) => i + 1).map((v) => (
-              <button type="button" key={v} role="radio" aria-checked={useLev === v} className={useLev === v ? 'on' : ''} disabled={adding} onClick={() => setLev(v)}>
+              <button type="button" key={v} role="radio" aria-checked={(atPrice ? lev : useLev) === v} className={(atPrice ? lev : useLev) === v ? 'on' : ''} disabled={adding && !atPrice} onClick={() => setLev(v)}>
                 {v}×
               </button>
             ))}
@@ -245,7 +339,7 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
             {[10, 25, 50, 75, 100].map((p) => (
               <button type="button" key={p} className={deploy === p ? 'on' : ''} onClick={() => pickPct(p)} disabled={!(avail > 0)}>{p}%</button>
             ))}
-            {held && (
+            {held && !atPrice && (
               <button
                 type="button"
                 className="qt-exitall"
@@ -272,15 +366,21 @@ export default function CryptoTrade({ symbol, book, post, onClose }) {
           <div><dt>Fee</dt><dd className="mono">{qty > 0 ? inr(fee) : '—'}</dd></div>
           <div><dt>Liq. at</dt><dd className="mono">{qty > 0 && liq ? fmtPrice(liq) : '—'}</dd></div>
           <div><dt>Available</dt><dd className={`mono ${short ? 'neg' : ''}`}>{avail != null ? inr(avail) : '…'}</dd></div>
-          <div><dt>Margin</dt><dd className="mono">{qty > 0 ? inr(opening > 0 ? (opening * price) / useLev : 0) : '—'}</dd></div>
+          <div><dt>Margin</dt><dd className="mono">{qty > 0 ? inr(opening > 0 ? (opening * px) / levNow : 0) : '—'}</dd></div>
         </dl>
 
         {short && <p className="status err">Not enough money: needs {inr(need)} (margin + fee).</p>}
         {status && status.kind !== 'busy' && <p className={`status ${status.kind}`}>{status.text}</p>}
 
-        <button className={`btn qt-go ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={!(qty > 0) || busy || short || !(price > 0) || !book}>
-          {busy ? 'Placing…' : `${action} at market`}
-        </button>
+        {atPrice ? (
+          <button className={`btn qt-go ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={!(qty > 0) || busy || short || !cond || !book}>
+            {busy ? 'Setting…' : trigOk && cond ? `${side === 'BUY' ? 'Buy / Long' : 'Sell / Short'} when ${cond === 'above' ? '≥' : '≤'} ${fmtPrice(trig)}` : 'Set order'}
+          </button>
+        ) : (
+          <button className={`btn qt-go ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={!(qty > 0) || busy || short || !(price > 0) || !book}>
+            {busy ? 'Placing…' : `${action} at market`}
+          </button>
+        )}
       </div>
     </form>
   );
