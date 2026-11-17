@@ -25,6 +25,19 @@ export const PARAMS = {
   slopeBars: 3, // 26 EMA lower than 3 candles ago = still falling
   cutoff: '13:30', // no new alerts from candles starting after this (IST)
   slPad: 0.0005, // stop 0.05 % above the bounce's high
+  firstHitBy: '09:24', // only stocks the screener sent for the first 5-minute candle (09:15)
+  fallbackR: 2, // target when the day's low is not below the entry: entry − 2 × risk
+  exitBy: '15:15', // backtest: close what is still open at this time
+};
+
+/**
+ * Was this Chartink hit for the first 5-minute candle (09:15)? Live alerts are stamped
+ * with the time the scan ran (≈ 09:20 for the 09:15 candle, ≈ 09:25 for the next);
+ * Chartink's backtest export uses the candle's start time (09:15).
+ */
+export const isFirstCandleHit = (ms, by = PARAMS.firstHitBy) => {
+  const t = new Date(ms + 330 * 60_000).toISOString().slice(11, 16);
+  return t >= '09:15' && t < by;
 };
 
 const IST_MS = 330 * 60_000;
@@ -130,7 +143,8 @@ export function evaluate(c5, { day, params = PARAMS } = {}) {
       bounceHigh = Math.max(bounceHigh, c.high);
       const entry = c.low;
       const sl = bounceHigh * (1 + P.slPad);
-      const target = Math.min(dayLow, c.low);
+      const risk = sl - entry;
+      const target = dayLow < entry ? dayLow : entry - P.fallbackR * risk;
       Object.assign(out, {
         status: 'rejected',
         alertAt: at,
@@ -142,6 +156,7 @@ export function evaluate(c5, { day, params = PARAMS } = {}) {
         reward: r2(entry - target),
         rr: sl > entry && entry > target ? Math.round(((entry - target) / (sl - entry)) * 10) / 10 : null,
         bounceHigh: r2(bounceHigh),
+        targetKind: dayLow < entry ? 'day-low' : `${P.fallbackR}R`,
         note: `rejected at the ${bounceHigh >= s * (1 - P.touchTol) ? '26' : '9'} EMA`,
       });
       break;
@@ -161,6 +176,63 @@ export function evaluate(c5, { day, params = PARAMS } = {}) {
     dayLow = Math.min(dayLow, c.low);
   }
   out.dayLow = r2(dayLow);
+  return out;
+}
+
+/**
+ * Backtest: what happened after a "rejected" alert, on that day's 1-minute candles.
+ * Entry = sell-stop at the alert candle's low (fills when price trades below it after the
+ * alert candle closes; at the open if it gaps through). If the stop is hit first the setup
+ * is cancelled. Once short, three exits are scored:
+ *   target — the setup's target (day's low, or 2R) · twoR — fixed 1:2 · hold — stop only,
+ *   closed at exitBy. A minute that touches both stop and target counts as the stop.
+ * Results in R (1R = entry → stop) and %.
+ */
+export function simulate(c1, setup, { params = PARAMS } = {}) {
+  const P = { ...PARAMS, ...params };
+  if (setup?.status !== 'rejected') return null;
+  const { entry, sl } = setup;
+  const risk = sl - entry;
+  if (!(risk > 0)) return { result: 'invalid' };
+  const day = istDate(setup.alertTime * 1000);
+  const after = c1.filter((c) => c.time >= setup.alertTime + FIVE && istDate(c.time * 1000) === day && istHHMM(c.time) < P.exitBy);
+  let i = 0;
+  let fill = null;
+  for (; i < after.length; i++) {
+    const c = after[i];
+    if (c.low <= entry) {
+      fill = Math.min(entry, c.open);
+      break;
+    }
+    if (c.high >= sl) return { result: 'cancelled', note: `stop ${istHHMM(c.time)} before entry` };
+  }
+  if (fill == null) return { result: 'no-entry' };
+  const entryAt = istHHMM(after[i].time);
+  const exits = {
+    target: setup.target,
+    twoR: entry - 2 * risk,
+    hold: null,
+  };
+  const out = { result: 'entered', fill: r2(fill), entryAt, riskPct: r2((risk / entry) * 100) };
+  let mfe = 0;
+  const done = {};
+  for (let j = i; j < after.length; j++) {
+    const c = after[j];
+    const stop = c.high >= sl;
+    for (const [k, tgt] of Object.entries(exits)) {
+      if (done[k]) continue;
+      if (stop) done[k] = { px: j > i && c.open > sl ? c.open : sl, at: istHHMM(c.time), how: 'stop' };
+      else if (tgt != null && c.low <= tgt) done[k] = { px: j > i ? Math.min(tgt, c.open) : tgt, at: istHHMM(c.time), how: 'target' };
+    }
+    if (!stop) mfe = Math.max(mfe, fill - c.low);
+    if (Object.keys(done).length === 3) break;
+  }
+  const last = after[after.length - 1];
+  for (const k of Object.keys(exits)) {
+    const d = done[k] || { px: last.close, at: istHHMM(last.time), how: 'time' };
+    out[k] = { ...d, px: r2(d.px), r: Math.round(((fill - d.px) / risk) * 100) / 100, pct: r2(((fill - d.px) / fill) * 100) };
+  }
+  out.mfeR = Math.round((mfe / risk) * 100) / 100;
   return out;
 }
 

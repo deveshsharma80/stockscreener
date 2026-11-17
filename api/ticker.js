@@ -47,7 +47,7 @@ import { PRODUCTS, addTrade, inSquareOffWindow, squareOffLabel, checkFunds, comp
 import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../lib/journal.js';
 import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, parseSeenTicks, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import { isFeedServer, notifyNse, streamToken } from '../lib/feed.js';
-import { runEmaSetups } from '../lib/emasetup.js';
+import { backtestSymbol, runEmaSetups } from '../lib/emasetup.js';
 import {
   DhanError,
   SEGMENTS,
@@ -130,6 +130,13 @@ export default async function handler(req, res) {
       case 'POST ema-setups-run':
         // gap-down EMA-rejection check (scheduler: a few seconds after each 5-minute close)
         return res.json({ ok: true, ...(await runEmaSetups()) });
+      case 'POST ema-backtest': {
+        // Signals → EMA Rejection → Backtest: one stock, its screener days
+        const symbol = String(body.symbol || '').trim().toUpperCase().slice(0, 40);
+        const days = (Array.isArray(body.days) ? body.days : []).map(String).slice(0, 60);
+        if (!symbol || !days.length) throw new HttpError(400, 'Give a symbol and its days');
+        return res.json({ ok: true, rows: await backtestSymbol(symbol, days) });
+      }
       case 'GET feed-token':
         // live prices straight from the feed server (Vultr); null → pages keep polling
         return res.json({ ok: true, stream: streamToken() });

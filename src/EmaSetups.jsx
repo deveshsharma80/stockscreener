@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AddToTicker, OrderButtons } from './AddToTicker.jsx';
 import { SECRET_KEY, api, price, store } from './Ticker.jsx';
 import { SETUP_EVENT } from './liveFeed.js';
-import { EMA_SCAN, PARAMS, STATUS_LABEL, istDate } from './emasetup.js';
+import { EMA_SCAN, PARAMS, STATUS_LABEL, isFirstCandleHit, istDate } from './emasetup.js';
+import EmaBacktest from './EmaBacktest.jsx';
 
 // Signals → EMA Rejection: stocks from the "Futures April 2025" Chartink screener
-// (gap-down, red first candle) and whether the bounce got rejected at the 9 / 26 EMA on
+// (gap-down, red first candle; only stocks sent for the 09:15 candle) and whether the bounce got rejected at the 9 / 26 EMA on
 // 5-minute candles. The feed server checks a few seconds after each 5-minute close.
 
 const ORDER = { rejected: 0, touched: 1, watching: 2, waiting: 3, 'broke-out': 4, expired: 5, error: 6 };
@@ -13,6 +14,19 @@ const hhmm = (iso) => new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit
 const fmt = (v) => (v == null ? '—' : price.format(v));
 
 export default function EmaSetups({ rows }) {
+  const [view, setView] = useState('live');
+  return (
+    <>
+      <div className="seg ema-views" role="group" aria-label="View">
+        <button className={view === 'live' ? 'on' : ''} onClick={() => setView('live')}>Live</button>
+        <button className={view === 'backtest' ? 'on' : ''} onClick={() => setView('backtest')}>Backtest</button>
+      </div>
+      {view === 'live' ? <EmaLive rows={rows} /> : <EmaBacktest />}
+    </>
+  );
+}
+
+function EmaLive({ rows }) {
   const today = istDate(Date.now());
   const [day, setDay] = useState(today);
   const [data, setData] = useState(null);
@@ -46,7 +60,7 @@ export default function EmaSetups({ rows }) {
   const hitsOfDay = useMemo(() => {
     const m = new Map();
     for (const r of rows) {
-      if (istDate(Date.parse(r.HitTime)) !== day) continue;
+      if (istDate(Date.parse(r.HitTime)) !== day || !isFirstCandleHit(Date.parse(r.HitTime))) continue;
       const prev = m.get(r.StockSymbol);
       if (!prev || Date.parse(r.HitTime) < Date.parse(prev.HitTime)) m.set(r.StockSymbol, r);
     }
@@ -154,7 +168,7 @@ export default function EmaSetups({ rows }) {
           {!list.length && <div className="empty">No stocks from “{EMA_SCAN}” {day === today ? 'yet today' : 'that day'}.</div>}
         </div>
         <div className="foot">
-          Short setup: after the gap-down first candle, the bounce reaches the 9 EMA (or up to the 26 EMA) and a red 5-minute candle then closes back below the 9 EMA and below the touching candle’s low, with the 26 EMA still falling. A close above the 26 EMA cancels it for the day. Entry below the alert candle’s low, stop above the bounce’s high, first target the day’s low. Paper-trade it first.
+          Short setup: after the gap-down first candle, the bounce reaches the 9 EMA (or up to the 26 EMA) and a red 5-minute candle then closes back below the 9 EMA and below the touching candle’s low, with the 26 EMA still falling. A close above the 26 EMA cancels it for the day. Entry below the alert candle’s low, stop above the bounce’s high, first target the day’s low (or 1:2 if the day’s low is above the entry). Only stocks the screener sends for the first 5-minute candle (09:15) are checked. Paper-trade it first.
         </div>
       </section>
     </>

@@ -221,58 +221,130 @@ function parseDhanDate(s) {
 
 // ------------------------------------------------------------------ quotes
 
-let quoteCache = { key: '', at: 0, data: null };
 const lastQuotes = new Map(); // "SEG:ID" -> { q, at } — latest quote per instrument
-let inFlight = null;
+
+// Dhan allows one quote request per second per account. Every caller (watchlist,
+// Running P&L pill, Trades, P&L, order checks, square-off) goes through one queue:
+// quotes younger than FRESH_MS are served from memory, everything else is merged
+// into a single batched request, and requests are spaced at least MIN_GAP_MS apart.
+const FRESH_MS = 1500;
+const MIN_GAP_MS = 1100;
+const RATE_RETRIES = 2;
+const STALE_OK_MS = 15000;
+let lastCallAt = 0;
+let pending = null; // { keys: Map, waiters: [], timer }
+let running = null; // promise of the request being sent now
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function fromCache(keys, maxAge) {
+  const out = {};
+  const now = Date.now();
+  for (const k of keys) {
+    const hit = lastQuotes.get(k);
+    if (!hit || now - hit.at > maxAge) return null;
+    out[k] = hit.q;
+  }
+  return out;
+}
+
+async function fetchDhanQuotes(instruments) {
+  if (MOCK) return mockQuotes(instruments);
+  let creds = await getCredentials();
+  if (!creds) throw new DhanError('Connect your Dhan account first (Dhan connection → paste access token).', { status: 400, kind: 'auth' });
+  creds = await maybeAutoRenew(creds);
+
+  const body = {};
+  for (const { segment, securityId } of instruments) (body[segment] ||= []).push(Number(securityId));
+
+  const send = async (c) => {
+    for (let attempt = 0; ; attempt++) {
+      lastCallAt = Date.now();
+      try {
+        return await dhanFetch('/marketfeed/quote', { method: 'POST', body, creds: c });
+      } catch (err) {
+        // Another instance or device may have used this second — wait it out and retry.
+        if (err.kind !== 'rate' || attempt >= RATE_RETRIES) throw err;
+        await sleep(MIN_GAP_MS + attempt * 500);
+      }
+    }
+  };
+
+  let json;
+  try {
+    json = await send(creds);
+  } catch (err) {
+    // Token may have been changed from another instance — retry once with fresh credentials.
+    if (err.kind !== 'auth') throw err;
+    const fresh = await getCredentials({ fresh: true });
+    if (!fresh || fresh.accessToken === creds.accessToken) throw err;
+    json = await send(fresh);
+  }
+  const root = json?.data?.data && typeof json.data.data === 'object' ? json.data.data : json?.data || {};
+  const out = {};
+  for (const [segment, byId] of Object.entries(root)) {
+    if (!byId || typeof byId !== 'object') continue;
+    for (const [id, q] of Object.entries(byId)) out[`${segment}:${id}`] = normalizeQuote(q);
+  }
+  return out;
+}
+
+async function flush() {
+  const batch = pending;
+  pending = null;
+  if (running) await running.catch(() => {});
+  const wait = lastCallAt + MIN_GAP_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  const instruments = [...batch.keys.values()];
+  lastCallAt = Date.now();
+  running = fetchDhanQuotes(instruments);
+  try {
+    const data = await running;
+    const at = Date.now();
+    for (const [k, q] of Object.entries(data)) lastQuotes.set(k, { q, at });
+    for (const w of batch.waiters) w.resolve();
+  } catch (err) {
+    for (const w of batch.waiters) w.reject(err);
+  } finally {
+    running = null;
+  }
+}
+
+function enqueue(instruments) {
+  if (!pending) {
+    pending = { keys: new Map(), waiters: [] };
+    // Gather callers for a moment so near-simultaneous requests share one Dhan call.
+    setTimeout(flush, 30);
+  }
+  for (const i of instruments) pending.keys.set(`${i.segment}:${i.securityId}`, i);
+  return new Promise((resolve, reject) => pending.waiters.push({ resolve, reject }));
+}
 
 /**
  * Live quotes for [{segment, securityId}] → { "NSE_EQ:2885": quote, ... }.
- * Responses are shared for 900 ms so several open tabs don't break the
- * 1 request/second limit.
+ * All callers share one queue so the 1 request/second limit is never exceeded
+ * from this server instance.
  */
 export async function getQuotes(instruments) {
   if (!instruments.length) return {};
-  const key = instruments.map((i) => `${i.segment}:${i.securityId}`).sort().join(',');
-  if (quoteCache.key === key && Date.now() - quoteCache.at < 900) return quoteCache.data;
-  if (inFlight?.key === key) return inFlight.promise;
+  const keys = instruments.map((i) => `${i.segment}:${i.securityId}`);
+  const cached = fromCache(keys, FRESH_MS);
+  if (cached) return cached;
 
-  const promise = (async () => {
-    if (MOCK) return mockQuotes(instruments);
-    let creds = await getCredentials();
-    if (!creds) throw new DhanError('Connect your Dhan account first (Dhan connection → paste access token).', { status: 400, kind: 'auth' });
-    creds = await maybeAutoRenew(creds);
-
-    const body = {};
-    for (const { segment, securityId } of instruments) (body[segment] ||= []).push(Number(securityId));
-
-    let json;
-    try {
-      json = await dhanFetch('/marketfeed/quote', { method: 'POST', body, creds });
-    } catch (err) {
-      // Token may have been changed from another instance — retry once with fresh credentials.
-      if (err.kind !== 'auth') throw err;
-      const fresh = await getCredentials({ fresh: true });
-      if (!fresh || fresh.accessToken === creds.accessToken) throw err;
-      json = await dhanFetch('/marketfeed/quote', { method: 'POST', body, creds: fresh });
-    }
-    const root = json?.data?.data && typeof json.data.data === 'object' ? json.data.data : json?.data || {};
-    const out = {};
-    for (const [segment, byId] of Object.entries(root)) {
-      if (!byId || typeof byId !== 'object') continue;
-      for (const [id, q] of Object.entries(byId)) out[`${segment}:${id}`] = normalizeQuote(q);
-    }
-    return out;
-  })();
-
-  inFlight = { key, promise };
   try {
-    const data = await promise;
-    quoteCache = { key, at: Date.now(), data };
-    for (const [k, q] of Object.entries(data)) lastQuotes.set(k, { q, at: Date.now() });
-    return data;
-  } finally {
-    if (inFlight?.promise === promise) inFlight = null;
+    await enqueue(instruments);
+  } catch (err) {
+    // Still rate-limited after retries: slightly old prices beat an error banner.
+    const stale = err.kind === 'rate' && fromCache(keys, STALE_OK_MS);
+    if (stale) return stale;
+    throw err;
   }
+  const out = {};
+  for (const k of keys) {
+    const hit = lastQuotes.get(k);
+    if (hit) out[k] = hit.q;
+  }
+  return out;
 }
 
 /**
@@ -291,7 +363,7 @@ export async function getFillQuote({ segment, securityId }) {
       return q;
     } catch (err) {
       if (err.kind !== 'rate' || attempt >= 2) throw err;
-      await new Promise((r) => setTimeout(r, 1100));
+      await sleep(1100);
     }
   }
 }
@@ -537,9 +609,114 @@ export async function searchInstruments(query, { limit = 25, segment } = {}) {
   return matches.slice(0, limit);
 }
 
+/**
+ * Equity instrument for a stock symbol as Chartink sends it (NSE trading
+ * symbol, e.g. "SBIN", "M&M", "BAJAJ-AUTO"). Prefers NSE, falls back to BSE.
+ */
+export async function findEquityBySymbol(symbol) {
+  const idx = await getInstrumentIndex();
+  const want = String(symbol || '').trim().toUpperCase().replace(/^(NSE|BSE):/, '');
+  if (!want) return null;
+  const match = (seg) => idx.list.find((r) => r.segment === seg && r.symbol.toUpperCase() === want);
+  return match('NSE_EQ') || match('BSE_EQ') || null;
+}
+
 export async function lookupInstrument(key) {
   const idx = await getInstrumentIndex();
   return idx.byKey.get(key) || null;
+}
+
+// ------------------------------------------------------------------ candles
+
+const candleCache = new Map(); // "key|days" -> { at, data }
+const IST_MS = 330 * 60_000;
+const istStamp = (ms) => new Date(ms + IST_MS).toISOString().slice(0, 19).replace('T', ' ');
+
+/**
+ * 1-minute candles for the last `days` calendar days up to now, as
+ * [{ time (epoch seconds), open, high, low, close, volume }], oldest first.
+ * Dhan has no 3-minute interval, so the page builds 3- and 5-minute candles
+ * from these. Cached for 20 s per instrument.
+ */
+export async function getIntradayCandles(inst, { days = 5, from, to } = {}) {
+  // from / to ('YYYY-MM-DD', IST) — a fixed past range (backtests); Dhan allows ≤ 90 days a request
+  const key = `${inst.segment}:${inst.securityId}|${from ? `${from}~${to}` : days}`;
+  const hit = candleCache.get(key);
+  if (hit && Date.now() - hit.at < 20_000) return hit.data;
+
+  let data;
+  if (MOCK) {
+    data = mockCandles(inst, from ? Math.ceil((Date.now() - Date.parse(`${from}T00:00:00+05:30`)) / 86_400_000) : days);
+    if (to) data = data.filter((c) => c.time * 1000 < Date.parse(`${to}T23:59:59+05:30`));
+  } else {
+    const creds = await getCredentials();
+    if (!creds) throw new DhanError('Connect your Dhan account first (Dhan connection → paste access token).', { status: 400, kind: 'auth' });
+    const now = Date.now();
+    const fromIst = from || new Date(now + IST_MS - days * 86_400_000).toISOString().slice(0, 10);
+    const json = await dhanFetch('/charts/intraday', {
+      method: 'POST',
+      creds,
+      body: {
+        securityId: String(inst.securityId),
+        exchangeSegment: inst.segment,
+        instrument: inst.instrument,
+        interval: '1',
+        oi: false,
+        fromDate: `${fromIst} 09:00:00`,
+        toDate: to ? `${to} 15:31:00` : istStamp(now),
+      },
+    });
+    const d = json?.data && Array.isArray(json.data.timestamp) ? json.data : json || {};
+    const ts = Array.isArray(d.timestamp) ? d.timestamp : [];
+    data = ts
+      .map((t, i) => ({
+        time: Math.round(Number(t) > 1e12 ? Number(t) / 1000 : Number(t)),
+        open: num(d.open?.[i]),
+        high: num(d.high?.[i]),
+        low: num(d.low?.[i]),
+        close: num(d.close?.[i]),
+        volume: num(d.volume?.[i]) || 0,
+      }))
+      .filter((c) => c.time && c.open != null && c.high != null && c.low != null && c.close != null)
+      .sort((a, b) => a.time - b.time);
+  }
+  candleCache.set(key, { at: Date.now(), data });
+  if (candleCache.size > 200) candleCache.delete(candleCache.keys().next().value);
+  return data;
+}
+
+function mockCandles(inst, days) {
+  // Random walk over NSE sessions (Mon–Fri 09:15–15:29 IST) ending at the mock LTP.
+  const key = `${inst.segment}:${inst.securityId}`;
+  const last = mockState.get(key)?.ltp ?? (inst.segment === 'IDX_I' ? 25100 : inst.segment.endsWith('FNO') ? 140 : 1500);
+  const out = [];
+  const now = Date.now();
+  let seed = Number(inst.securityId) || 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let d = days; d >= 0; d--) {
+    const dayIst = new Date(now + IST_MS - d * 86_400_000);
+    const dow = dayIst.getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    const date = dayIst.toISOString().slice(0, 10);
+    const open = Date.parse(`${date}T09:15:00+05:30`);
+    for (let m = 0; m < 375; m++) {
+      const t = open + m * 60_000;
+      if (t > now - 60_000) break;
+      out.push({ time: t / 1000 });
+    }
+  }
+  let p = last;
+  for (let i = out.length - 1; i >= 0; i--) {
+    const c = out[i];
+    const step = p * 0.0015 * (rnd() - 0.5);
+    c.close = Math.round(p * 20) / 20;
+    c.open = Math.round((p - step) * 20) / 20;
+    c.high = Math.round(Math.max(c.open, c.close) * (1 + rnd() * 0.0008) * 20) / 20;
+    c.low = Math.round(Math.min(c.open, c.close) * (1 - rnd() * 0.0008) * 20) / 20;
+    c.volume = inst.segment === 'IDX_I' ? 0 : Math.floor(500 + rnd() * 20000);
+    p = c.open;
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ mock mode
