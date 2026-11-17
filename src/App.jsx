@@ -15,6 +15,7 @@ import { isEmaScan } from './emasetup.js';
 import { SETUP_EVENT } from './liveFeed.js';
 import Calculator from './Calculator.jsx';
 import Settings from './Settings.jsx';
+import AutoTrade from './AutoTrade.jsx';
 import BBScan from './BBScan.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
@@ -67,6 +68,15 @@ export const SECTIONS = [
       ['reports', 'Reports', 'Daily and weekly P&L after brokerage'],
       ['charts', 'Charts', 'P&L lines by trade type, daily bars, win rate, brokerage and instruments'],
       ['trades', 'Fills', 'Every Buy / Sell fill, with brokerage and P&L'],
+    ],
+  },
+  {
+    id: 'auto',
+    label: 'Auto Trading',
+    icon: 'robot',
+    tabs: [
+      ['today', 'Today', 'Paper shorts placed automatically from EMA Rejection alerts — own money, max 3 a day, full 5× split over 3'],
+      ['history', 'History', 'Automated trades by day and every order, with P&L after charges'],
     ],
   },
   {
@@ -124,7 +134,7 @@ export const SECTIONS = [
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.
 export const GROUPS = [
-  { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper'] },
+  { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper', 'auto'] },
   { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'cpos', 'cpaper', 'movers', 'candles'] },
   { id: 'tools', label: 'Tools', short: '⚒', sections: ['calc', 'settings'] },
 ];
@@ -1076,6 +1086,7 @@ function Shell({ auth, onLogout }) {
           {section.id === 'cpos' && <CryptoPositions />}
           {section.id === 'cpaper' && <CryptoPaper tab={tab} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
+          {section.id === 'auto' && <AutoTrade tab={tab} />}
           {section.id === 'calc' && <Calculator market={tab} />}
           {section.id === 'settings' && <Settings />}
         </div>
@@ -1194,8 +1205,8 @@ function OrderToasts() {
         <div key={key} className={`toast ${o.status === 'FILLED' ? 'ok' : o.status === 'FAILED' ? 'bad' : ''}`}>
           <span>{o.status === 'FILLED' ? '✓' : o.status === 'FAILED' ? '⚠' : '⏱'} {eventText(o)}</span>
           <span className="toast-actions">
-            <a className="link" href={o.status === 'FILLED' ? '#/market/positions' : '#/market/orders'} onClick={() => close(key)}>
-              {o.status === 'FILLED' ? 'Positions' : 'Orders'}
+            <a className="link" href={o.kind === 'AUTO' ? '#/auto/today' : o.status === 'FILLED' ? '#/market/positions' : '#/market/orders'} onClick={() => close(key)}>
+              {o.kind === 'AUTO' ? 'Auto Trading' : o.status === 'FILLED' ? 'Positions' : 'Orders'}
             </a>
             <button className="link" onClick={() => close(key)} aria-label="Dismiss">×</button>
           </span>
@@ -1222,6 +1233,13 @@ function Icon({ name }) {
           <rect x="4" y="6" width="4" height="9" rx="1" />
           <rect x="10" y="7" width="4" height="7" rx="1" />
           <rect x="16" y="9" width="4" height="7" rx="1" />
+        </svg>
+      );
+    case 'robot':
+      return (
+        <svg {...p}>
+          <rect x="4" y="8" width="16" height="11" rx="2.5" />
+          <path d="M12 8V4.5M9.5 4.5h5M9 13h.01M15 13h.01M9.5 16.2h5M2 12.5v3M22 12.5v3" />
         </svg>
       );
     case 'wallet':

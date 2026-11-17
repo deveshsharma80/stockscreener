@@ -38,6 +38,12 @@
 // POST {action:"journal-delete", ids:[tradeId…]}      delete closed trades (their fills and notes)
 // POST {action:"paper-reset-bucket", product, amount} reset one trade type's money (keeps history)
 //
+// Automated trading (EMA Rejection shorts, own money — lib/autotrade.js):
+// GET  ?action=auto                                    account, rules, trades, P&L
+// POST {action:"auto-settings", enabled?, exitMode?: "hold"|"2R"}
+// POST {action:"auto-reset", amount}                   new period with this amount (no open shorts)
+// POST {action:"auto-close", id}                       cover an open short now / cancel a waiting one
+//
 // Equity Intraday auto square-off: from 15:09 IST (PAPER_SQUAREOFF_TIME) every open Equity Intraday
 // position is closed at the live price, and new Equity Intraday entries are refused until the close.
 // Runs with the price polls and ?action=check-orders (cron-job.org), so it works with every tab closed.
@@ -48,6 +54,7 @@ import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../
 import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, parseSeenTicks, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import { isFeedServer, notifyNse, streamToken } from '../lib/feed.js';
 import { backtestSymbol, runEmaSetups } from '../lib/emasetup.js';
+import { autoLevels, autoView, closeAuto, resetAuto, runAuto, setAutoSettings } from '../lib/autotrade.js';
 import {
   DhanError,
   SEGMENTS,
@@ -127,9 +134,25 @@ export default async function handler(req, res) {
       case 'GET orders':
         return res.json({ ok: true, ...(await ordersView()) });
       case 'GET ema-setups-run':
-      case 'POST ema-setups-run':
-        // gap-down EMA-rejection check (scheduler: a few seconds after each 5-minute close)
-        return res.json({ ok: true, ...(await runEmaSetups()) });
+      case 'POST ema-setups-run': {
+        // gap-down EMA-rejection check (scheduler: a few seconds after each 5-minute close),
+        // then the automation places its shorts for any new alert right away
+        const r = await runEmaSetups();
+        const auto = await runAutoNow();
+        if (auto.events?.length) await notifyNse('auto trades');
+        return res.json({ ok: true, ...r, auto });
+      }
+      case 'GET auto':
+        return res.json({ ok: true, ...(await autoView(quoteKeys)), market: marketStatus() });
+      case 'POST auto-settings':
+        return res.json({ ok: true, account: await setAutoSettings({ enabled: body.enabled, exitMode: body.exitMode }), ...(await autoAfterChange()) });
+      case 'POST auto-reset':
+        return res.json({ ok: true, account: await resetAuto(body.amount), ...(await autoAfterChange()) });
+      case 'POST auto-close': {
+        const r = await closeAuto(String(body.id || ''), quoteKeys);
+        await notifyNse('auto trade closed');
+        return res.json({ ok: true, result: r });
+      }
       case 'POST ema-backtest': {
         // Signals → EMA Rejection → Backtest: one stock, its screener days
         const symbol = String(body.symbol || '').trim().toUpperCase().slice(0, 40);
@@ -405,7 +428,38 @@ async function checkOrders({ quotes: known = {}, fresh = false, seen = {} } = {}
   const squared = await squareOffIntraday({ force: fresh });
   const r = await checkPending({ quotes: known, fresh, seen });
   if (squared.length) r.events = [...squared, ...(r.events || [])];
+  // Automated trading (its own money): only on the scheduler's / feed server's checks
+  if (fresh) {
+    const auto = await runAutoNow({ known, seen });
+    if (auto.events?.length) r.events = [...(r.events || []), ...auto.events];
+    r.auto = { active: auto.active ?? null, error: auto.error };
+  }
   return r;
+}
+
+/** Quotes for "SEG:ID" keys (Dhan's 1-per-second queue). */
+const quoteKeys = (keys) => getQuotes(keys.map((k) => KEY_RE.exec(k)).filter(Boolean).map((m) => ({ segment: m[1], securityId: m[2] })));
+
+async function runAutoNow({ known = {}, seen = {} } = {}) {
+  return runAuto({
+    getQuotes: async (keys) => {
+      const missing = keys.filter((k) => !(known[k]?.ltp > 0));
+      return { ...known, ...(missing.length ? await quoteKeys(missing) : {}) };
+    },
+    seen,
+    marketOpen: marketStatus().open,
+    ignoreHours: ignoreHours(),
+    instFor: async (symbol) => {
+      const i = await findEquityBySymbol(symbol);
+      return i ? { ...i, key: `${i.segment}:${i.securityId}` } : null;
+    },
+  });
+}
+
+/** After a settings change / reset: the page's new view, and the feed server re-reads its levels. */
+async function autoAfterChange() {
+  await notifyNse('auto settings');
+  return autoView(quoteKeys);
 }
 
 // Square-off state for this server instance: checked at most every 20 s, and not again
@@ -480,13 +534,19 @@ async function checkPending({ quotes: known = {}, fresh = false, seen = {} } = {
  * the Dhan login for the live feed, and whether the market is open.
  */
 async function nseFeedState() {
-  const [rows, orders, creds] = await Promise.all([readTable(WATCHLIST), readOrders({ fresh: true }), getCredentials({ fresh: true })]);
+  const [rows, orders, creds, auto] = await Promise.all([readTable(WATCHLIST), readOrders({ fresh: true }), getCredentials({ fresh: true }), autoLevels().catch(() => ({ watch: [], orders: [] }))]);
+  const watch = rows.map((r) => ({ key: r.key, segment: r.segment, securityId: String(r.securityId), symbol: r.symbol }));
+  // automated shorts are watched tick by tick too, even when not in the watchlist
+  for (const w of auto.watch) if (!watch.some((x) => x.key === w.key)) watch.push(w);
   return {
     market: marketStatus(),
-    watch: rows.map((r) => ({ key: r.key, segment: r.segment, securityId: String(r.securityId), symbol: r.symbol })),
-    orders: orders
-      .filter((o) => o.status === 'PENDING')
-      .map((o) => ({ id: o.id, key: o.key, symbol: o.symbol, kind: o.kind || null, side: o.side, direction: o.direction, triggerPrice: o.triggerPrice, createdAt: o.createdAt })),
+    watch,
+    orders: [
+      ...orders
+        .filter((o) => o.status === 'PENDING')
+        .map((o) => ({ id: o.id, key: o.key, symbol: o.symbol, kind: o.kind || null, side: o.side, direction: o.direction, triggerPrice: o.triggerPrice, createdAt: o.createdAt })),
+      ...auto.orders,
+    ],
     dhan: creds?.accessToken ? { clientId: creds.clientId, accessToken: creds.accessToken, expiresAt: creds.expiresAt || null } : null,
   };
 }

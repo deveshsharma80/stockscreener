@@ -34,6 +34,7 @@ export const orderLabel = (o) =>
 
 /** Toast / message text for an order that just changed. */
 export function eventText(o) {
+  if (o.kind === 'AUTO') return o.text;
   if (o.kind === 'SQOFF')
     return `Auto square-off: ${o.side === 'BUY' ? 'bought back' : 'sold'} ${(o.filledQty ?? '').toLocaleString('en-IN')} ${o.symbol} at ₹${price.format(o.fillPrice)}. Equity Intraday closes at 15:09.`;
   if (o.status === 'FILLED' && o.kind)
