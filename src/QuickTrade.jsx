@@ -3,6 +3,8 @@ import { PRODUCT_LABEL, describe, kindOf, price, productFor } from './Ticker.jsx
 
 // Small floating Buy / Sell box for the chart. Drag it by its title bar to
 // keep the candles in view; its position is remembered on this device.
+// "Market" trades now; "At price" sets an order that the app places by itself
+// when the price reaches yours (valid until today's close), with optional SL / TP.
 
 const POS_KEY = 'stockhits.quickTradePos';
 const W = 360;
@@ -19,7 +21,7 @@ const clamp = (p, el) => {
   return { x: Math.min(Math.max(8, p.x), window.innerWidth - w - 8), y: Math.min(Math.max(8, p.y), window.innerHeight - Math.min(h, 120)) };
 };
 
-export default function QuickTrade({ row, quote, position, account, products, onPlace, onClose }) {
+export default function QuickTrade({ row, quote, position, account, products, onPlace, onOrder, onClose }) {
   const box = useRef(null);
   const drag = useRef(null);
   const [pos, setPos] = useState(readPos);
@@ -27,13 +29,23 @@ export default function QuickTrade({ row, quote, position, account, products, on
   const [units, setUnits] = useState('1');
   const [status, setStatus] = useState(null); // { kind, text }
   const [deploy, setDeploy] = useState(null); // % of available money chosen with the slider (null = typed qty)
+  const [mode, setMode] = useState('market'); // 'market' | 'price'
+  const [trigger, setTrigger] = useState('');
+  const [sl, setSl] = useState('');
+  const [tp, setTp] = useState('');
 
   const product = productFor(row);
   const fno = kindOf(row.segment) === 'fno';
   const lot = Number(row.lotSize) || 1;
   const n = Math.max(0, Math.floor(Number(units) || 0));
   const qty = fno ? n * lot : n;
-  const ltp = quote?.ltp ?? null;
+  const live = quote?.ltp ?? null;
+  const atPrice = mode === 'price' && Boolean(onOrder);
+  const trig = Number(trigger);
+  const trigOk = atPrice && trig > 0;
+  // everything below is worked out at your order price, or the live price for a market trade
+  const ltp = atPrice ? (trigOk ? trig : null) : live;
+  const cond = trigOk && live > 0 ? (trig > live ? 'above' : trig < live ? 'below' : null) : null;
   const lev = products?.[product]?.leverage ?? (product === 'EQ_INTRADAY' ? 4 : 1);
   const pct = products?.[product]?.brokeragePct ?? (product === 'EQ_INTRADAY' ? 0.025 : 1);
   const optBuy = product === 'IDX_OPT_BUY' || product === 'STK_OPT_BUY';
@@ -75,8 +87,13 @@ export default function QuickTrade({ row, quote, position, account, products, on
   useEffect(() => {
     const on = () => setPos((p) => clamp(p, box.current));
     window.addEventListener('resize', on);
+    const ro = typeof ResizeObserver !== 'undefined' && box.current ? new ResizeObserver(on) : null;
+    ro?.observe(box.current); // e.g. switching to "At price" makes the box taller
     on();
-    return () => window.removeEventListener('resize', on);
+    return () => {
+      window.removeEventListener('resize', on);
+      ro?.disconnect();
+    };
   }, []);
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -107,6 +124,23 @@ export default function QuickTrade({ row, quote, position, account, products, on
 
   const submit = async (e) => {
     e.preventDefault();
+    if (atPrice) {
+      if (!qty || busy || rule || short || !cond) return;
+      setStatus({ kind: 'busy', text: 'Setting order…' });
+      try {
+        const o = await onOrder({ side, qty, product, triggerPrice: trig, sl: sl === '' ? null : Number(sl), tp: tp === '' ? null : Number(tp) });
+        const until = o.validUntil ? new Date(o.validUntil).toLocaleString('en-IN', { weekday: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : 'the close';
+        setStatus({
+          kind: 'ok',
+          text: `Order set: ${o.side === 'BUY' ? 'buy' : 'sell'} ${o.qty.toLocaleString('en-IN')} when the price ${o.direction === 'up' ? 'rises to' : 'falls to'} ₹${price.format(o.triggerPrice)}${o.sl != null ? ` · SL ₹${price.format(o.sl)}` : ''}${o.tp != null ? ` · TP ₹${price.format(o.tp)}` : ''}. Valid until ${until}. See Market → Orders.`,
+        });
+        setSl('');
+        setTp('');
+      } catch (err) {
+        setStatus({ kind: 'err', text: err.message });
+      }
+      return;
+    }
     if (!qty || busy || rule || short) return;
     setStatus({ kind: 'busy', text: 'Placing…' });
     try {
@@ -129,11 +163,61 @@ export default function QuickTrade({ row, quote, position, account, products, on
       <div className="qt-head" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} title="Drag to move">
         <span className="qt-grip" aria-hidden="true">⋮⋮</span>
         <b className="mono">{describe(row)}</b>
-        <span className="mono qt-ltp">{ltp != null ? price.format(ltp) : '…'}</span>
+        <span className="mono qt-ltp">{live != null ? price.format(live) : '…'}</span>
         <button type="button" className="qt-x" onClick={onClose} aria-label="Close trade box">×</button>
       </div>
 
       <div className="qt-body">
+        {onOrder && (
+          <div className="seg ct-mode" role="group" aria-label="Order type">
+            <button type="button" className={!atPrice ? 'on' : ''} onClick={() => (setMode('market'), setStatus(null))}>Market</button>
+            <button
+              type="button"
+              className={atPrice ? 'on' : ''}
+              onClick={() => {
+                setMode('price');
+                setStatus(null);
+                if (!trigger && live > 0) setTrigger(String(live));
+              }}
+            >
+              At price
+            </button>
+          </div>
+        )}
+
+        {atPrice && (
+          <div className="ct-trig">
+            <label className="ct-trig-main">
+              <span>{side === 'BUY' ? 'Buy' : 'Sell'} when price reaches (₹)</span>
+              <input type="number" inputMode="decimal" min="0" step="any" value={trigger} onChange={(e) => (setTrigger(e.target.value), setStatus(null))} placeholder="price" aria-label="Order price" />
+            </label>
+            <div className="ct-trig-note">
+              {!trigOk ? (
+                'Enter the price.'
+              ) : !cond ? (
+                'That is the current price — use Market instead.'
+              ) : (
+                <>
+                  Fires when the price {cond === 'above' ? 'rises to' : 'falls to'} <b className="mono">₹{price.format(trig)}</b>
+                  {live > 0 && <> ({((trig / live - 1) * 100).toFixed(2)}% from ₹{price.format(live)})</>} · fills at the market price then · valid until today’s close
+                </>
+              )}
+            </div>
+            {!(optBuy && side === 'SELL') && (
+              <div className="ct-sltp">
+                <label>
+                  <span>Stop loss (₹)</span>
+                  <input type="number" inputMode="decimal" min="0" step="any" value={sl} onChange={(e) => setSl(e.target.value)} placeholder="optional" aria-label="Stop loss" />
+                </label>
+                <label>
+                  <span>Take profit (₹)</span>
+                  <input type="number" inputMode="decimal" min="0" step="any" value={tp} onChange={(e) => setTp(e.target.value)} placeholder="optional" aria-label="Take profit" />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="qt-row">
           <button
             type="button"
@@ -173,7 +257,7 @@ export default function QuickTrade({ row, quote, position, account, products, on
             {[10, 25, 50, 75, 100].map((p) => (
               <button type="button" key={p} className={deploy === p ? 'on' : ''} onClick={() => pickPct(p)} disabled={!unitCost || !(avail > 0)}>{p}%</button>
             ))}
-            {exitQty > 0 && (
+            {exitQty > 0 && !atPrice && (
               <button type="button" className="qt-exitall" onClick={() => (setUnits(String(fno ? Math.ceil(exitQty / lot) : exitQty)), setDeploy(null), setStatus(null))} title="Quantity that closes your whole position">
                 Close all {exitQty.toLocaleString('en-IN')}
               </button>
@@ -205,9 +289,15 @@ export default function QuickTrade({ row, quote, position, account, products, on
         {!rule && short && <p className="status err">Not enough {PRODUCT_LABEL[product]} money: needs ₹{price.format(need)}.</p>}
         {status && status.kind !== 'busy' && <p className={`status ${status.kind}`}>{status.text}</p>}
 
-        <button className={`btn qt-go ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={!qty || busy || Boolean(rule) || short}>
-          {busy ? 'Placing…' : `${side === 'BUY' ? 'Buy' : 'Sell'} ${qty ? qty.toLocaleString('en-IN') : ''} at market`}
-        </button>
+        {atPrice ? (
+          <button className={`btn qt-go ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={!qty || busy || Boolean(rule) || short || !cond}>
+            {busy ? 'Setting…' : trigOk && cond ? `${side === 'BUY' ? 'Buy' : 'Sell'} ${qty ? qty.toLocaleString('en-IN') : ''} when ${cond === 'above' ? '≥' : '≤'} ₹${price.format(trig)}` : 'Set order'}
+          </button>
+        ) : (
+          <button className={`btn qt-go ${side === 'BUY' ? 'buy-btn' : 'sell-btn'}`} type="submit" disabled={!qty || busy || Boolean(rule) || short}>
+            {busy ? 'Placing…' : `${side === 'BUY' ? 'Buy' : 'Sell'} ${qty ? qty.toLocaleString('en-IN') : ''} at market`}
+          </button>
+        )}
       </div>
     </form>
   );

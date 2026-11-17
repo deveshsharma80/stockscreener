@@ -405,7 +405,11 @@ async function checkPending({ quotes: known = {}, fresh = false } = {}) {
       fetchQuotes: async (keys) =>
         getQuotes(keys.map((k) => KEY_RE.exec(k)).filter(Boolean).map((m) => ({ segment: m[1], securityId: m[2] }))),
       fill: async (o) => {
-        if (!isExit(o)) return placePaperTrade({ key: o.key, side: o.side, qty: o.qty, product: ORDER_PRODUCT, orderId: o.id });
+        if (!isExit(o)) {
+          const t = await placePaperTrade({ key: o.key, side: o.side, qty: o.qty, product: o.product || ORDER_PRODUCT, orderId: o.id });
+          if (o.sl != null || o.tp != null) await attachExits(o); // never fails the fill
+          return t;
+        }
         // Stop loss / take profit: close whatever is open right now
         const pos = (await paperBook()).positions.find((p) => p.key === o.key && p.qty !== 0);
         if (!pos || (o.side === 'SELL') !== pos.qty > 0) throw Object.assign(new Error('Position was already closed'), { cancelled: true });
@@ -422,6 +426,18 @@ async function checkPending({ quotes: known = {}, fresh = false } = {}) {
     return { ...r, checkEveryMs: active ? 10_000 : 60_000 };
   } catch (err) {
     return { events: [], pending: null, error: err.message, checkEveryMs: 30_000 };
+  }
+}
+
+/** After an at-price order fills: put its stop loss / take profit on the position. */
+async function attachExits(o) {
+  try {
+    const pos = (await paperBook()).positions.find((p) => p.key === o.key && p.qty !== 0);
+    if (!pos) return;
+    const inst = { segment: o.segment, securityId: o.securityId, symbol: o.symbol, name: o.name };
+    for (const [kind, price] of [['SL', o.sl], ['TP', o.tp]]) if (price != null) await setExit({ inst, kind, price, pos });
+  } catch (err) {
+    console.warn('SL/TP after order fill:', err.message);
   }
 }
 
@@ -445,7 +461,7 @@ async function instForOrder({ key, symbol }) {
     throw new HttpError(400, 'Which stock? Send a symbol like SBIN');
   }
   if (!inst) throw new HttpError(404, `${key} is not a known instrument`);
-  if (productFor(inst) !== ORDER_PRODUCT) throw new HttpError(400, 'Trigger orders are Equity Intraday only: pick an NSE/BSE stock.');
+  if (!productFor(inst)) throw new HttpError(400, 'At-price orders work for NSE/BSE stocks and options only.');
   return inst;
 }
 
@@ -487,16 +503,35 @@ async function placeTriggerOrder(body) {
 
   const inst = await instForOrder(body);
   const key = `${inst.segment}:${inst.securityId}`;
+  // Trade type: the one the Trade box chose (stocks: Equity Intraday; options: Options Buying)
+  const product = body.product == null || body.product === '' ? productFor(inst) || ORDER_PRODUCT : String(body.product);
+  if (!PRODUCTS[product] || product === 'OTHER') throw new HttpError(400, 'At-price orders work for Equity Intraday and Options Buying.');
   const quote = await getFillQuote(inst); // needs Dhan: sets which way the price has to move
+
+  // Optional stop loss / take profit, set on the position when the order fills
+  const level = (v, name) => {
+    if (v === null || v === undefined || v === '') return null;
+    const x = Math.round(Number(v) * 100) / 100;
+    if (!(x > 0) || !Number.isFinite(x)) throw new HttpError(400, `${name} must be a price above 0.`);
+    return x;
+  };
+  const sl = level(body.sl, 'Stop loss');
+  const tp = level(body.tp, 'Take profit');
+  const long = side === 'BUY';
+  if ((sl != null || tp != null) && (product === 'IDX_OPT_BUY' || product === 'STK_OPT_BUY') && !long) {
+    throw new HttpError(400, 'Stop loss / take profit go on a buy (selling options you hold closes them).');
+  }
+  if (sl != null && (long ? sl >= triggerPrice : sl <= triggerPrice)) throw new HttpError(400, `Stop loss for a ${long ? 'buy' : 'sell'} must be ${long ? 'below' : 'above'} the order price.`);
+  if (tp != null && (long ? tp <= triggerPrice : tp >= triggerPrice)) throw new HttpError(400, `Take profit for a ${long ? 'buy' : 'sell'} must be ${long ? 'above' : 'below'} the order price.`);
 
   // Funds at the trigger price (checked again when it fills)
   const book = await paperBook();
-  const problem = validateOrder(book, inst, { key, side, qty, product: ORDER_PRODUCT });
+  const problem = validateOrder(book, inst, { key, side, qty, product });
   if (problem) throw new HttpError(400, problem, { kind: 'rules' });
-  const funds = checkFunds(book, { key, side, qty, price: triggerPrice, product: ORDER_PRODUCT });
+  const funds = checkFunds(book, { key, side, qty, price: triggerPrice, product });
   if (!funds.ok) {
     const f = (v) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
-    throw new HttpError(400, `Not enough paper funds in your Equity Intraday money: at ₹${f(triggerPrice)} this order needs ₹${f(funds.required)} (margin at ${funds.leverage}× + brokerage), available ₹${f(funds.available)}.`, { kind: 'funds' });
+    throw new HttpError(400, `Not enough paper funds in your ${PRODUCTS[product].label} money: at ₹${f(triggerPrice)} this order needs ₹${f(funds.required)} (margin at ${funds.leverage}× + brokerage), available ₹${f(funds.available)}.`, { kind: 'funds' });
   }
 
   // Into the Ticker, so it shows up on the Market pages
@@ -516,6 +551,9 @@ async function placeTriggerOrder(body) {
     ltp: quote.ltp,
     refPrice: Number.isFinite(Number(body.refPrice)) && body.refPrice !== null && body.refPrice !== '' ? Number(body.refPrice) : null,
     source: body.source,
+    product,
+    sl,
+    tp,
   });
   return { order, rows, watchNote };
 }

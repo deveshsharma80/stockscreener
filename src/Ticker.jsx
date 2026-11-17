@@ -290,6 +290,13 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
     return j.trade;
   };
 
+  // ---- "at price" order from the Trade box (placed by the app when the price gets there)
+  const placeOrderAt = async (key, { side, qty, product, triggerPrice, sl, tp }) => {
+    const j = await api(secret, 'place-order', { method: 'POST', body: { key, side, qty, product, triggerPrice, sl, tp, source: 'trade-box' } });
+    if (j.orders) setOrders(j.orders);
+    return j.order;
+  };
+
   // ---- stop loss / take profit (exit orders on an open position)
   const exitsByKey = useMemo(() => {
     const m = new Map();
@@ -538,6 +545,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
           account={book?.account}
           products={book?.products}
           onPlace={(side, qty, product) => placeTrade(tradeKey, side, qty, product)}
+          onOrder={(o) => placeOrderAt(tradeKey, o)}
           onClose={() => setTradeKey(null)}
         />
       )}

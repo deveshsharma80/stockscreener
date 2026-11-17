@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, price } from './Ticker.jsx';
 
-// Trigger orders: "Buy SBIN when it reaches ₹820". Always Equity Intraday.
+// Trigger orders: "Buy SBIN when it reaches ₹820". Equity Intraday or Options Buying (Trade box → At price).
 // The server watches the price and places the paper trade at the live price
 // once it gets there (see lib/orders.js).
 
@@ -305,6 +305,13 @@ export function OrdersCard({ secret, orders, quotes, market, onChange }) {
                     <span className="sym">{o.symbol}</span>
                     {o.kind && <span className={`exit-tag ${o.kind}`}>{EXIT_LABEL[o.kind]}</span>}
                     {o.refPrice != null && <div className="tk-sub"><span>First hit ₹{price.format(o.refPrice)}</span></div>}
+                    {!o.kind && (o.product && o.product !== 'EQ_INTRADAY' || o.sl != null || o.tp != null) && (
+                      <div className="tk-sub">
+                        {o.product && o.product !== 'EQ_INTRADAY' && <span className={`tk-prod ${o.product}`}>{o.product === 'IDX_OPT_BUY' ? 'Index options' : 'Stock options'}</span>}
+                        {o.sl != null && <span className="om-lvl sl">SL ₹{price.format(o.sl)}</span>}
+                        {o.tp != null && <span className="om-lvl tp">TP ₹{price.format(o.tp)}</span>}
+                      </div>
+                    )}
                   </td>
                   <td><span className={`side-pill ${o.side === 'BUY' ? 'buy' : 'sell'}`}>{o.side}</span></td>
                   <td className="num mono">{o.qty != null ? o.qty.toLocaleString('en-IN') : o.filledQty != null ? o.filledQty.toLocaleString('en-IN') : <span className="muted-cell" title="Closes the whole position">All</span>}</td>
@@ -344,7 +351,7 @@ export function OrdersCard({ secret, orders, quotes, market, onChange }) {
         )}
       </div>
       <div className="foot">
-        Equity Intraday paper orders. ↑ fills when the price rises to the trigger, ↓ when it falls to it; the fill is at the live price at that moment.
+        Paper orders (Equity Intraday, or Options Buying when set from the Trade box). ↑ fills when the price rises to the trigger, ↓ when it falls to it; the fill is at the live price at that moment, and any SL / TP is then set on the position.
         Checked while this app is open (and by a scheduler, if you set one up). Unfilled orders expire at 3:30 PM.
       </div>
     </section>

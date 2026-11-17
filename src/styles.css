@@ -1417,3 +1417,11 @@ a.btn.cp-chart-trade { text-decoration: none; display: inline-flex; align-items:
 .ind-tag.cp-ost-cancelled { background: var(--surface-2); color: var(--muted); }
 .ind-tag.cp-ost-failed { background: #fee2e2; color: #991b1b; }
 @media (prefers-color-scheme: dark) { .ind-tag.cp-ord, .ind-tag.cp-ost-filled { background: #1e3a8a; color: #dbeafe; } .ind-tag.cp-ost-failed { background: #7f1d1d; color: #fee2e2; } }
+
+/* ---------- NSE Trade box: At price ---------- */
+.qt { max-width: calc(100vw - 16px); box-sizing: border-box; }
+.qt .qt-body { overflow-x: hidden; }
+.qt .ct-trig input { width: 100%; box-sizing: border-box; }
+.om-lvl { font-family: var(--mono); font-size: 11px; padding: 0 5px; border-radius: 4px; margin-left: 4px; }
+.om-lvl.sl { color: var(--neg); border: 1px solid currentColor; }
+.om-lvl.tp { color: var(--pos); border: 1px solid currentColor; }
