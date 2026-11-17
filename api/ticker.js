@@ -46,7 +46,7 @@ import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.
 import { PRODUCTS, addTrade, inSquareOffWindow, squareOffLabel, checkFunds, computeBook, deleteTrades, productFor, readAccount, readTrades, resetAccount, resetBucket, setCapital, validateOrder } from '../lib/paper.js';
 import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../lib/journal.js';
 import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, parseSeenTicks, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
-import { isFeedServer, notifyNse } from '../lib/feed.js';
+import { isFeedServer, notifyNse, streamToken } from '../lib/feed.js';
 import {
   DhanError,
   SEGMENTS,
@@ -125,6 +125,9 @@ export default async function handler(req, res) {
       }
       case 'GET orders':
         return res.json({ ok: true, ...(await ordersView()) });
+      case 'GET feed-token':
+        // live prices straight from the feed server (Vultr); null → pages keep polling
+        return res.json({ ok: true, stream: streamToken() });
       case 'GET journal': {
         const [trades, notes] = await Promise.all([readTrades(), readNotes()]);
         return res.json({ ok: true, trips: roundTrips(trades), notes, market: marketStatus() });

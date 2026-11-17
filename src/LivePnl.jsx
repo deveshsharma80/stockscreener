@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PRODUCT_SHORT, SECRET_KEY, api, describe, fmtExpiry, kindOf, money, pnlPctOf, price, segLabel, signed, store } from './Ticker.jsx';
 import { BOOK_EVENT, ORDERS_EVENT, QUOTES_EVENT, emitBook, emitOrders } from './Orders.jsx';
+import { keysToPoll, useLiveFeed } from './liveFeed.js';
 
 // Running P&L pill shown on every NSE Market page. Clicking it opens a panel
 // with each open paper position, live P&L and an Exit button per row.
@@ -55,7 +56,7 @@ export default function LivePnl() {
   useEffect(() => {
     const on = (e) => {
       if (!e.detail?.quotes) return;
-      lastShared.current = Date.now();
+      if (e.detail.source !== 'feed') lastShared.current = Date.now(); // the Market page polled
       setQuotes((x) => ({ ...x, ...e.detail.quotes }));
       if (e.detail.market) setMarket(e.detail.market);
     };
@@ -65,6 +66,14 @@ export default function LivePnl() {
 
   const positions = useMemo(() => (book?.positions || []).filter((p) => p.qty !== 0), [book]);
   const keys = positions.map((p) => p.key).join(',');
+  // the pill is on every NSE page: it starts this tab's live price stream
+  const live = useLiveFeed(secret || null);
+  // an order the server filled on a live tick → the book changed
+  useEffect(() => {
+    const on = (e) => e.detail?.source === 'feed' && e.detail.events?.length && loadBook();
+    window.addEventListener(ORDERS_EVENT, on);
+    return () => window.removeEventListener(ORDERS_EVENT, on);
+  }, [loadBook]);
 
   // Our own price poll, only while positions are open and no one else is polling
   useEffect(() => {
@@ -73,9 +82,11 @@ export default function LivePnl() {
     let timer;
     const tick = async () => {
       const wait = market && !market.open ? POLL_CLOSED : POLL_OPEN;
-      if (!document.hidden && Date.now() - lastShared.current > wait) {
+      // streamed positions need no polling; poll the rest unless the Market page already does
+      const pollKeys = live.live ? keysToPoll(keys) : keys;
+      if (!document.hidden && pollKeys && Date.now() - lastShared.current > wait) {
         try {
-          const j = await api(secret, 'quotes', { params: { keys } });
+          const j = await api(secret, 'quotes', { params: { keys: pollKeys } });
           if (!alive) return;
           setQuotes((x) => ({ ...x, ...j.quotes }));
           setMarket(j.market);
@@ -94,7 +105,7 @@ export default function LivePnl() {
       alive = false;
       clearTimeout(timer);
     };
-  }, [secret, keys, market?.open, loadBook]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [secret, keys, market?.open, loadBook, live.live]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = positions.map((p) => {
     const ltp = quotes[p.key]?.ltp ?? null;

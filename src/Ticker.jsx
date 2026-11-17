@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { createPortal } from 'react-dom';
 import { BOOK_EVENT, ORDERS_EVENT, OrdersCard, QUOTES_EVENT, emitBook, emitOrders } from './Orders.jsx';
 import QuickTrade from './QuickTrade.jsx';
+import { keysToPoll, useLiveFeed } from './liveFeed.js';
 
 // The chart library is only downloaded when a chart is opened.
 const Chart = lazy(() => import('./Chart.jsx'));
@@ -217,6 +218,34 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
     [rows, positions, waitingKeys.join(',')] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const stoppedFor = feedError && (feedError.kind === 'auth' || feedError.kind === 'plan') ? feedError.kind : null;
+
+  // Live prices from the feed server (Vultr) for watchlist instruments; polling covers the rest
+  const live = useLiveFeed(unlocked ? secret : null);
+  useEffect(() => {
+    const on = (e) => {
+      if (e.detail?.source !== 'feed' || !e.detail.quotes) return;
+      setQuotes((prev) => {
+        const next = { ...prev };
+        for (const [k, q] of Object.entries(e.detail.quotes)) next[k] = { ...prev[k], ...q };
+        return next;
+      });
+      setLastAt(new Date());
+    };
+    window.addEventListener(QUOTES_EVENT, on);
+    return () => window.removeEventListener(QUOTES_EVENT, on);
+  }, []);
+  // Orders the server filled on a live tick: refresh the orders list and the paper book
+  useEffect(() => {
+    if (!unlocked) return;
+    const on = async (e) => {
+      if (e.detail?.source !== 'feed' || !e.detail.events?.length) return;
+      const [od, pb] = await Promise.all([api(secret, 'orders'), api(secret, 'paper')]).catch(() => [null, null]);
+      if (od) setOrders(od.orders);
+      if (pb) setBook(pb);
+    };
+    window.addEventListener(ORDERS_EVENT, on);
+    return () => window.removeEventListener(ORDERS_EVENT, on);
+  }, [unlocked, secret]);
   const running = unlocked && conn?.connected && !paused && !hidden && keys && !stoppedFor;
   const effectiveInterval = market && !market.open ? Math.max(intervalMs, CLOSED_INTERVAL) : intervalMs;
 
@@ -227,12 +256,16 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
     const tick = async () => {
       let wait = effectiveInterval;
       try {
-        const j = await api(secret, 'quotes', { params: { keys } });
+        // the stream already brings watchlist prices: poll only the rest (and order fills) slowly
+        const pollKeys = keysToPoll(keys);
+        if (live.live && !pollKeys) wait = Math.max(wait, 15_000);
+        else if (live.live) wait = Math.max(wait, 5_000);
+        const j = await api(secret, 'quotes', { params: { keys: pollKeys } });
         if (!alive) return;
         setQuotes((prev) => ({ ...prev, ...j.quotes }));
         setMarket(j.market);
         window.dispatchEvent(new CustomEvent(QUOTES_EVENT, { detail: { quotes: j.quotes, market: j.market } }));
-        setLastAt(new Date(j.at));
+        if (!live.live) setLastAt(new Date(j.at));
         setFeedError(null);
         // A trigger order filled / expired during this poll: refresh orders and the paper book
         if (j.orders?.events?.length) {
@@ -254,7 +287,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
       alive = false;
       clearTimeout(timer);
     };
-  }, [running, keys, secret, effectiveInterval]);
+  }, [running, keys, secret, effectiveInterval, live.live]);
 
   // ---- watchlist actions
   const add = async (key) => {
@@ -379,7 +412,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
       {actionsEl &&
         createPortal(
           <div className="tk-live">
-            <span className={`tk-dot ${running ? 'on' : ''}`} />
+            <span className={`tk-dot ${running ? 'on' : ''} ${live.live && running ? 'stream' : ''}`} title={live.live ? 'Prices stream live from the feed server; instruments outside the watchlist are polled' : undefined} />
             <span className="tk-live-text">
               {!conn?.connected
                 ? 'Not connected'
@@ -391,9 +424,11 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
                       ? 'Paused while tab is hidden'
                       : !keys
                         ? 'Add an instrument'
-                        : lastAt
-                          ? `Updated ${lastAt.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`
-                          : 'Connecting…'}
+                        : live.live
+                          ? `Live · ${live.count} from Dhan feed`
+                          : lastAt
+                            ? `Updated ${lastAt.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`
+                            : 'Connecting…'}
             </span>
             <select
               className="select tk-int"

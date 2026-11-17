@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, money, price, signed, store } from './Ticker.jsx';
-import { BOOK_EVENT } from './Orders.jsx';
+import { BOOK_EVENT, ORDERS_EVENT, QUOTES_EVENT } from './Orders.jsx';
+import { keysToPoll } from './liveFeed.js';
 
 // Trades: every paper trade from entry to exit, with P&L, timing and your
 // journal notes (saved on the server, table "trade_journal").
@@ -86,15 +87,29 @@ export default function Journal({ subview = 'all' }) {
 
   // Live price for trades still open (every 5 s; slower when the tab is hidden)
   const openKeys = useMemo(() => [...new Set((data?.trips || []).filter((t) => t.status === 'OPEN').map((t) => t.key))].join(','), [data]);
+  // Prices shared by the live stream (or the Market page) count too
+  useEffect(() => {
+    const on = (e) => e.detail?.quotes && setQuotes((x) => ({ ...x, ...e.detail.quotes }));
+    const onOrders = (e) => unlocked && e.detail?.source === 'feed' && e.detail.events?.length && load(secret);
+    window.addEventListener(QUOTES_EVENT, on);
+    window.addEventListener(ORDERS_EVENT, onOrders);
+    return () => {
+      window.removeEventListener(QUOTES_EVENT, on);
+      window.removeEventListener(ORDERS_EVENT, onOrders);
+    };
+  }, [unlocked, secret, load]);
   useEffect(() => {
     if (!unlocked || !openKeys) return;
     let alive = true;
     let timer;
     const tick = async () => {
       try {
-        const j = await api(secret, 'quotes', { params: { keys: openKeys } });
-        if (alive) setQuotes((x) => ({ ...x, ...j.quotes }));
-        if (alive && j.orders?.events?.length) load(secret); // a trigger order filled
+        const pollKeys = keysToPoll(openKeys); // streamed ones arrive by themselves
+        if (pollKeys) {
+          const j = await api(secret, 'quotes', { params: { keys: pollKeys } });
+          if (alive) setQuotes((x) => ({ ...x, ...j.quotes }));
+          if (alive && j.orders?.events?.length) load(secret); // a trigger order filled
+        }
       } catch {
         /* open P&L stays unknown */
       }

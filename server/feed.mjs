@@ -26,9 +26,12 @@
 //   GET  /health          short public status
 //   POST /levels          app → server: current crypto levels (header x-feed-secret)
 //   POST /nse-changed     app → server: NSE watchlist / orders / token changed (header x-feed-secret)
+//   GET  /stream?token=   live NSE prices for the app's pages (Server-Sent Events; token from
+//                         the app, signed with FEED_SECRET, valid 12 h)
 //   GET  /status          full status            (only from this machine)
 //   POST /run/<job>       run a job now           (only from this machine)
 import http from 'node:http';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 
 const APP = (process.env.APP_URL || 'https://devtradingapp.com').replace(/\/$/, '');
 const CRON_SECRET = process.env.CRON_SECRET || '';
@@ -129,7 +132,10 @@ async function runJob(name, why = 'schedule') {
   st.last = { at: Date.now(), why, ok: r.ok, status: r.status, ms: r.ms, summary };
   log(`${r.ok ? 'OK  ' : 'FAIL'} ${name} (${why}, ${r.ms} ms): ${summary}`);
   if (name === 'cp-check') await afterCheck(r.json);
-  if (name === 'nse-check-orders' && r.ok && r.json?.orders?.events?.length) nseScheduleRefresh('orders filled');
+  if (name === 'nse-check-orders' && r.ok && r.json?.orders?.events?.length) {
+    nseScheduleRefresh('orders filled');
+    streamBroadcast('orders', { events: r.json.orders.events, pending: r.json.orders.pending });
+  }
   if (st.again) {
     st.again = false;
     setTimeout(() => runJob(name, 'again'), 500);
@@ -350,6 +356,7 @@ async function nseRefresh(why) {
   nse.refreshedAt = Date.now();
   log(`NSE (${why}): ${nse.watch.length} watchlist instruments, ${nse.orders.length} waiting orders${tokenChanged ? ' · Dhan token updated' : ''}`);
   nseConnectIfNeeded(tokenChanged);
+  streamState();
 }
 
 function nseScheduleRefresh(why) {
@@ -377,6 +384,7 @@ function nseClose(note) {
     } catch {}
   }
   if (note) nse.note = note;
+  setTimeout(streamState, 0);
 }
 
 function nseConnectIfNeeded(force) {
@@ -424,11 +432,11 @@ function nseOpen(subKey) {
   nse.ws = ws;
   let gotData = false;
   ws.onopen = () => {
-    // Ticker mode (LTP + time), at most 100 instruments per message
+    // Full mode (price, volume, open/high/low, best bid/ask), at most 100 instruments per message
     const list = nse.watch.map((w) => ({ ExchangeSegment: w.segment, SecurityId: String(w.securityId) }));
     for (let i = 0; i < list.length; i += 100) {
       const part = list.slice(i, i + 100);
-      ws.send(JSON.stringify({ RequestCode: 15, InstrumentCount: part.length, InstrumentList: part }));
+      ws.send(JSON.stringify({ RequestCode: 21, InstrumentCount: part.length, InstrumentList: part }));
     }
     log(`NSE: Dhan feed open, subscribed ${list.length}: ${nse.watch.map((w) => w.symbol).join(' ')}`);
   };
@@ -475,21 +483,56 @@ function nseOnMessage(data) {
     const segCode = v.getUint8(off + 3);
     const id = v.getInt32(off + 4, true);
     const key = nseKeyFor(segCode, id);
+    const f32 = (o) => Math.round(v.getFloat32(off + o, true) * 100) / 100;
+    const i32 = (o) => v.getInt32(off + o, true);
+    const q = (nse.prices[key] ||= {});
+    let ltp = null;
     if (code === 2 && off + 16 <= v.byteLength) {
-      // Ticker: LTP (float32) + last trade time
-      nseOnTick(key, Math.round(v.getFloat32(off + 8, true) * 100) / 100);
+      ltp = f32(8); // ticker: LTP + time
+    } else if (code === 4 && off + 50 <= v.byteLength) {
+      // quote
+      ltp = f32(8);
+      Object.assign(q, { lastQty: v.getInt16(off + 12, true), avgPrice: f32(18), volume: i32(22), open: f32(34), high: f32(42), low: f32(46) });
+    } else if (code === 8 && off + 162 <= v.byteLength) {
+      // full: quote fields + OI + 5-level depth (we keep the best bid / ask)
+      ltp = f32(8);
+      Object.assign(q, { lastQty: v.getInt16(off + 12, true), avgPrice: f32(18), volume: i32(22), oi: i32(34), open: f32(46), high: f32(54), low: f32(58) });
+      const d = off + 62; // first depth level
+      const bidQty = v.getInt32(d, true);
+      const askQty = v.getInt32(d + 4, true);
+      const bid = Math.round(v.getFloat32(d + 12, true) * 100) / 100;
+      const ask = Math.round(v.getFloat32(d + 16, true) * 100) / 100;
+      Object.assign(q, { bid: bid > 0 ? bid : null, bidQty: bid > 0 ? bidQty : null, ask: ask > 0 ? ask : null, askQty: ask > 0 ? askQty : null });
+    } else if (code === 5 && off + 12 <= v.byteLength) {
+      q.oi = i32(8);
+      streamDirty.add(key);
     } else if (code === 6 && off + 16 <= v.byteLength) {
-      (nse.prices[key] ||= {}).prevClose = Math.round(v.getFloat32(off + 8, true) * 100) / 100;
+      q.prevClose = f32(8);
+      nseQuoteDerived(q);
+      streamDirty.add(key);
     } else if (code === 50 && off + 10 <= v.byteLength) {
       const reason = v.getInt16(off + 8, true);
       nse.note = `Dhan disconnected: ${DISCONNECT_REASON[reason] || `reason ${reason}`}`;
       if (reason === 807 || reason === 809) nse.state = 'no-token';
       log(`NSE: ${nse.note}`);
     }
+    if (ltp > 0) {
+      q.ltp = ltp;
+      nseQuoteDerived(q);
+      streamDirty.add(key);
+      nseOnTick(key, ltp);
+    }
     // next packet (Dhan usually sends one per message): known size, else the length field
     const size = PACKET[code] || (len >= 8 ? len : 0);
     if (!size || off + size > v.byteLength) break;
     off += size;
+  }
+}
+
+function nseQuoteDerived(q) {
+  if (q.ltp > 0 && q.prevClose > 0) {
+    q.change = Math.round((q.ltp - q.prevClose) * 100) / 100;
+    q.changePct = ((q.ltp - q.prevClose) / q.prevClose) * 100;
   }
 }
 
@@ -503,9 +546,9 @@ function nseOnTick(key, ltp) {
     nse.since = now;
     nse.backoff = 3_000;
     log('NSE: live ticks arriving');
+    streamState();
   }
   const p = (nse.prices[key] ||= {});
-  p.ltp = ltp;
   p.at = now;
   const hits = nse.orders.filter((o) => o.key === key && (o.direction === 'up' ? ltp >= o.triggerPrice : ltp <= o.triggerPrice) && now >= Date.parse(o.createdAt || 0));
   if (!hits.length) return;
@@ -532,7 +575,8 @@ function nseStatus() {
     reconnects: nse.reconnects,
     tokenExpires: nse.dhan?.expiresAt ? `${istParts(new Date(nse.dhan.expiresAt)).text} IST` : null,
     refreshedSecondsAgo: ago(nse.refreshedAt),
-    prices: Object.fromEntries(nse.watch.map((w) => [w.symbol, nse.prices[w.key]?.ltp != null ? { ltp: nse.prices[w.key].ltp, secondsAgo: ago(nse.prices[w.key].at) } : null])),
+    prices: Object.fromEntries(nse.watch.map((w) => [w.symbol, nse.prices[w.key]?.ltp != null ? { ltp: nse.prices[w.key].ltp, chg: nse.prices[w.key].changePct != null ? `${nse.prices[w.key].changePct.toFixed(2)}%` : null, secondsAgo: ago(nse.prices[w.key].at) } : null])),
+    pagesConnected: streamClients.size,
     recentHits: nse.hits.map((h) => ({ at: `${istParts(new Date(h.at)).text} IST`, ltp: h.ltp, what: h.what })),
   };
 }
@@ -544,6 +588,95 @@ setInterval(() => {
     nseConnectIfNeeded(true);
   }
 }, 30_000);
+
+
+// ------------------------------------------------------------------ live prices for the app's pages (SSE)
+
+const streamClients = new Set();
+const streamDirty = new Set();
+const MAX_STREAM_CLIENTS = 30;
+
+/** Token = "<expiry ms>.<HMAC-SHA256 of 'stream:<expiry>' with FEED_SECRET>", made by the app. */
+function streamTokenOk(token) {
+  if (!FEED_SECRET) return false;
+  const [exp, sig] = String(token || '').split('.');
+  if (!(Number(exp) > Date.now()) || Number(exp) > Date.now() + 13 * 3600_000 || !sig) return false;
+  const want = createHmac('sha256', FEED_SECRET).update(`stream:${exp}`).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(want);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+const pickQuote = (q) => {
+  const { at, ...rest } = q || {};
+  return rest;
+};
+
+function streamSend(res, event, data) {
+  try {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  } catch {}
+}
+
+function streamBroadcast(event, data) {
+  for (const res of streamClients) streamSend(res, event, data);
+}
+
+/** Which instruments the stream covers and whether it is live (pages poll the rest). */
+function streamStateData() {
+  return { state: nse.state, live: nse.state === 'live', keys: nse.watch.map((w) => w.key), note: nse.note || null };
+}
+let lastStateJson = '';
+function streamState() {
+  const d = streamStateData();
+  const j = JSON.stringify(d);
+  if (j === lastStateJson) return;
+  lastStateJson = j;
+  streamBroadcast('state', d);
+}
+
+function streamOpen(req, res) {
+  if (streamClients.size >= MAX_STREAM_CLIENTS) {
+    res.writeHead(503, { 'access-control-allow-origin': '*' });
+    return res.end('busy');
+  }
+  res.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'access-control-allow-origin': '*',
+    'x-accel-buffering': 'no',
+  });
+  res.write('retry: 3000\n\n');
+  streamSend(res, 'state', streamStateData());
+  const snap = {};
+  for (const w of nse.watch) if (nse.prices[w.key]?.ltp > 0) snap[w.key] = pickQuote(nse.prices[w.key]);
+  streamSend(res, 'q', { quotes: snap, at: Date.now() });
+  streamClients.add(res);
+  req.on('close', () => streamClients.delete(res));
+}
+
+// batch ticks: at most 4 updates a second per page
+setInterval(() => {
+  if (!streamDirty.size || !streamClients.size) {
+    streamDirty.clear();
+    return;
+  }
+  const quotes = {};
+  for (const k of streamDirty) quotes[k] = pickQuote(nse.prices[k]);
+  streamDirty.clear();
+  streamBroadcast('q', { quotes, at: Date.now() });
+}, 250);
+
+// keep connections open through proxies; also re-announce state changes
+setInterval(() => {
+  for (const res of streamClients) {
+    try {
+      res.write(': ping\n\n');
+    } catch {}
+  }
+  streamState();
+}, 15_000);
 
 // ------------------------------------------------------------------ HTTP
 
@@ -591,7 +724,7 @@ http
         healthy: watcherHealthy(),
         watching: watchedSymbols().length,
         jobsFailingNow: Object.entries(runs).filter(([, r]) => r.last && !r.last.ok).map(([k]) => k),
-        nse: { state: nse.state, instruments: nse.watch.length, lastTickSecondsAgo: ago(nse.lastMsg) },
+        nse: { state: nse.state, instruments: nse.watch.length, lastTickSecondsAgo: ago(nse.lastMsg), pagesConnected: streamClients.size },
         uptimeMin: Math.round((Date.now() - started) / 60_000),
       });
     }
@@ -608,6 +741,10 @@ http
         }
       });
       return;
+    }
+    if (req.method === 'GET' && url.pathname === '/stream') {
+      if (!streamTokenOk(url.searchParams.get('token'))) return send(res, 401, { ok: false, error: 'bad or expired token' });
+      return streamOpen(req, res);
     }
     if (req.method === 'POST' && url.pathname === '/nse-changed') {
       if (!FEED_SECRET || req.headers['x-feed-secret'] !== FEED_SECRET) return send(res, 401, { ok: false, error: 'bad secret' });

@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, fmtExpiry, kindOf, money, price, segLabel, signed, store } from './Ticker.jsx';
-import { BOOK_EVENT } from './Orders.jsx';
+import { BOOK_EVENT, ORDERS_EVENT, QUOTES_EVENT } from './Orders.jsx';
+import { keysToPoll } from './liveFeed.js';
 import PaperCharts from './PaperCharts.jsx';
 
 // Paper-trading P&L reports: daily and weekly booked P&L, plus live open P&L.
@@ -68,6 +69,12 @@ export default function Pnl({ subview = 'overview' }) {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Prices shared by the live stream (or the Market page) count too
+  useEffect(() => {
+    const on = (e) => e.detail?.quotes && setQuotes((q) => ({ ...q, ...e.detail.quotes }));
+    window.addEventListener(QUOTES_EVENT, on);
+    return () => window.removeEventListener(QUOTES_EVENT, on);
+  }, []);
   // Live prices for open positions (every 10 s) so today's / this week's totals include open P&L.
   const openKeys = useMemo(() => (book?.positions || []).filter((p) => p.qty).map((p) => p.key).join(','), [book]);
   useEffect(() => {
@@ -76,8 +83,11 @@ export default function Pnl({ subview = 'overview' }) {
     let timer;
     const tick = async () => {
       try {
-        const j = await api(secret, 'quotes', { params: { keys: openKeys } });
-        if (alive) setQuotes((q) => ({ ...q, ...j.quotes }));
+        const pollKeys = keysToPoll(openKeys); // streamed ones arrive by themselves
+        if (pollKeys) {
+          const j = await api(secret, 'quotes', { params: { keys: pollKeys } });
+          if (alive) setQuotes((q) => ({ ...q, ...j.quotes }));
+        }
       } catch {
         /* open P&L just stays unknown */
       }
