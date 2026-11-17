@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, fmtExpiry, kindOf, money, price, segLabel, signed, store } from './Ticker.jsx';
 import { BOOK_EVENT, ORDERS_EVENT, QUOTES_EVENT } from './Orders.jsx';
-import { keysToPoll } from './liveFeed.js';
+import { isLive, keysToPoll } from './liveFeed.js';
+import { usePolling } from './settings.js';
 import PaperCharts from './PaperCharts.jsx';
 
 // Paper-trading P&L reports: daily and weekly booked P&L, plus live open P&L.
@@ -76,6 +77,7 @@ export default function Pnl({ subview = 'overview' }) {
     return () => window.removeEventListener(QUOTES_EVENT, on);
   }, []);
   // Live prices for open positions (every 10 s) so today's / this week's totals include open P&L.
+  const polling = usePolling();
   const openKeys = useMemo(() => (book?.positions || []).filter((p) => p.qty).map((p) => p.key).join(','), [book]);
   useEffect(() => {
     if (!unlocked || !openKeys) return;
@@ -83,7 +85,7 @@ export default function Pnl({ subview = 'overview' }) {
     let timer;
     const tick = async () => {
       try {
-        const pollKeys = keysToPoll(openKeys); // streamed ones arrive by themselves
+        const pollKeys = isLive() ? keysToPoll(openKeys) : openKeys; // streamed ones arrive by themselves
         if (pollKeys) {
           const j = await api(secret, 'quotes', { params: { keys: pollKeys } });
           if (alive) setQuotes((q) => ({ ...q, ...j.quotes }));
@@ -91,15 +93,15 @@ export default function Pnl({ subview = 'overview' }) {
       } catch {
         /* open P&L just stays unknown */
       }
-      if (alive && !document.hidden) timer = setTimeout(tick, 10_000);
-      else if (alive) timer = setTimeout(tick, 30_000);
+      // polling off (Tools → Settings): just this first load
+      if (alive && polling.on) timer = setTimeout(tick, document.hidden ? Math.max(30_000, polling.intervalMs) : polling.intervalMs);
     };
     tick();
     return () => {
       alive = false;
       clearTimeout(timer);
     };
-  }, [unlocked, openKeys, secret]);
+  }, [unlocked, openKeys, secret, polling.on, polling.intervalMs]);
 
   if (checking) return <p className="tk-note">Opening P&amp;L…</p>;
   if (!unlocked) {

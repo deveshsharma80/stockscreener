@@ -11,6 +11,7 @@ import CryptoPaper, { CryptoPositions } from './CryptoPaper.jsx';
 import CryptoLivePnl from './CryptoLivePnl.jsx';
 import FirstHits from './FirstHits.jsx';
 import Calculator from './Calculator.jsx';
+import Settings from './Settings.jsx';
 import BBScan from './BBScan.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
@@ -110,12 +111,18 @@ export const SECTIONS = [
     icon: 'calculator',
     tabs: [['crypto', 'Crypto', 'Profit / loss for a crypto futures trade: leverage, brokerage, breakeven, liquidation and target prices']],
   },
+  {
+    id: 'settings',
+    label: 'Settings',
+    icon: 'settings',
+    tabs: [['app', 'App settings', 'Price refresh and other app-wide settings (saved on this device)']],
+  },
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.
 export const GROUPS = [
   { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper'] },
   { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'cpos', 'cpaper', 'movers', 'candles'] },
-  { id: 'tools', label: 'Tools', short: '⚒', sections: ['calc'] },
+  { id: 'tools', label: 'Tools', short: '⚒', sections: ['calc', 'settings'] },
 ];
 const groupOf = (sectionId) => GROUPS.find((g) => g.sections.includes(sectionId)) || GROUPS[0];
 const GROUPS_KEY = 'stockhits.navGroupsClosed';
@@ -1060,6 +1067,7 @@ function Shell({ auth, onLogout }) {
           {section.id === 'cpaper' && <CryptoPaper tab={tab} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
           {section.id === 'calc' && <Calculator market={tab} />}
+          {section.id === 'settings' && <Settings />}
         </div>
       </main>
     </div>
@@ -1179,6 +1187,13 @@ function Icon({ name }) {
       return (
         <svg {...p}>
           <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10" />
+        </svg>
+      );
+    case 'settings':
+      return (
+        <svg {...p}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
         </svg>
       );
     case 'calculator':

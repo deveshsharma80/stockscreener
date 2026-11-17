@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { BOOK_EVENT, ORDERS_EVENT, OrdersCard, QUOTES_EVENT, emitBook, emitOrders } from './Orders.jsx';
 import QuickTrade from './QuickTrade.jsx';
 import { keysToPoll, useLiveFeed } from './liveFeed.js';
+import { CLOSED_MIN_MS, usePolling } from './settings.js';
 
 // The chart library is only downloaded when a chart is opened.
 const Chart = lazy(() => import('./Chart.jsx'));
@@ -11,14 +12,6 @@ const Chart = lazy(() => import('./Chart.jsx'));
 // /api/ticker (your Dhan token stays on the server).
 
 export const SECRET_KEY = 'stockhits.secret';
-const INTERVAL_KEY = 'stockhits.tickerInterval';
-const INTERVALS = [
-  [1000, '1s'],
-  [2000, '2s'],
-  [5000, '5s'],
-  [10000, '10s'],
-];
-const CLOSED_INTERVAL = 30_000; // outside market hours prices barely move
 const TABS = [
   ['all', 'All'],
   ['eq', 'Equity'],
@@ -127,8 +120,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
   const [feedError, setFeedError] = useState(null);
   const [lastAt, setLastAt] = useState(null);
   const [market, setMarket] = useState(null);
-  const [intervalMs, setIntervalMs] = useState(() => Number(store.get(INTERVAL_KEY)) || 2000);
-  const [paused, setPaused] = useState(false);
+  const polling = usePolling(); // Tools → Settings: price polling on/off + interval
   const [hidden, setHidden] = useState(() => typeof document !== 'undefined' && document.hidden);
   const [tab, setTab] = useState('all');
   const [sort, setSort] = useState({ key: 'order', dir: 'asc' });
@@ -246,8 +238,8 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
     window.addEventListener(ORDERS_EVENT, on);
     return () => window.removeEventListener(ORDERS_EVENT, on);
   }, [unlocked, secret]);
-  const running = unlocked && conn?.connected && !paused && !hidden && keys && !stoppedFor;
-  const effectiveInterval = market && !market.open ? Math.max(intervalMs, CLOSED_INTERVAL) : intervalMs;
+  const running = unlocked && conn?.connected && !hidden && keys && !stoppedFor;
+  const effectiveInterval = market && !market.open ? Math.max(polling.intervalMs, CLOSED_MIN_MS) : polling.intervalMs;
 
   useEffect(() => {
     if (!running) return;
@@ -256,16 +248,19 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
     const tick = async () => {
       let wait = effectiveInterval;
       try {
-        // the stream already brings watchlist prices: poll only the rest (and order fills) slowly
-        const pollKeys = keysToPoll(keys);
-        if (live.live && !pollKeys) wait = Math.max(wait, 15_000);
-        else if (live.live) wait = Math.max(wait, 5_000);
+        // The stream brings watchlist prices; ask Dhan only for the rest. With polling off
+        // (Tools → Settings) that happens once; with polling on, every few seconds.
+        const pollKeys = live.live ? keysToPoll(keys) : keys;
+        if (!pollKeys) {
+          if (alive && polling.on) timer = setTimeout(tick, wait);
+          return;
+        }
         const j = await api(secret, 'quotes', { params: { keys: pollKeys } });
         if (!alive) return;
         setQuotes((prev) => ({ ...prev, ...j.quotes }));
         setMarket(j.market);
         window.dispatchEvent(new CustomEvent(QUOTES_EVENT, { detail: { quotes: j.quotes, market: j.market } }));
-        if (!live.live) setLastAt(new Date(j.at));
+        setLastAt(new Date(j.at));
         setFeedError(null);
         // A trigger order filled / expired during this poll: refresh orders and the paper book
         if (j.orders?.events?.length) {
@@ -279,15 +274,19 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
         setFeedError({ message: e.message, kind: e.kind });
         if (e.kind === 'rate') wait = Math.max(wait, 3000);
         else wait = Math.max(wait, 5000);
+        // even with polling off, retry a failed first load
+        if (!polling.on) wait = Math.max(wait, 15_000);
+        if (alive) timer = setTimeout(tick, wait);
+        return;
       }
-      if (alive) timer = setTimeout(tick, wait);
+      if (alive && polling.on) timer = setTimeout(tick, wait);
     };
     tick();
     return () => {
       alive = false;
       clearTimeout(timer);
     };
-  }, [running, keys, secret, effectiveInterval, live.live]);
+  }, [running, keys, secret, effectiveInterval, live.live, polling.on]);
 
   // ---- watchlist actions
   const add = async (key) => {
@@ -412,38 +411,27 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
       {actionsEl &&
         createPortal(
           <div className="tk-live">
-            <span className={`tk-dot ${running ? 'on' : ''} ${live.live && running ? 'stream' : ''}`} title={live.live ? 'Prices stream live from the feed server; instruments outside the watchlist are polled' : undefined} />
+            <a
+              className={`tk-dot ${live.live || (running && polling.on) ? 'on' : ''} ${live.live ? 'stream' : ''}`}
+              href="#/settings/app"
+              title={live.live ? 'Prices stream live from the feed server · price polling: Tools → Settings' : 'Price polling: Tools → Settings'}
+              aria-label="Price refresh settings"
+            />
             <span className="tk-live-text">
               {!conn?.connected
                 ? 'Not connected'
                 : stoppedFor
                   ? 'Stopped'
-                  : paused
-                    ? 'Paused'
-                    : hidden
-                      ? 'Paused while tab is hidden'
-                      : !keys
-                        ? 'Add an instrument'
-                        : live.live
-                          ? `Live · ${live.count} from Dhan feed`
-                          : lastAt
-                            ? `Updated ${lastAt.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`
-                            : 'Connecting…'}
+                  : !keys
+                    ? 'Add an instrument'
+                    : live.live
+                      ? `Live · ${live.count} from Dhan feed`
+                      : hidden && polling.on
+                        ? 'Paused while tab is hidden'
+                        : lastAt
+                          ? `${polling.on ? 'Updated' : 'Prices as of'} ${lastAt.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}${polling.on ? '' : ' · polling off'}`
+                          : 'Connecting…'}
             </span>
-            <select
-              className="select tk-int"
-              value={intervalMs}
-              onChange={(e) => {
-                setIntervalMs(Number(e.target.value));
-                store.set(INTERVAL_KEY, e.target.value);
-              }}
-              aria-label="Refresh every"
-            >
-              {INTERVALS.map(([v, l]) => <option key={v} value={v}>Every {l}</option>)}
-            </select>
-            <button className="btn" onClick={() => setPaused((p) => !p)} disabled={!conn?.connected}>
-              {paused ? 'Resume' : 'Pause'}
-            </button>
           </div>,
           actionsEl
         )}
@@ -545,7 +533,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
         </div>
         <div className="foot">
           {rows.length} {rows.length === 1 ? 'instrument' : 'instruments'} · data from Dhan Quote API
-          {conn?.connected && effectiveInterval !== intervalMs && ' · 30 s refresh while market is closed'}
+          {conn?.connected && polling.on && effectiveInterval !== polling.intervalMs && ' · 30 s refresh while market is closed'}
         </div>
       </section>
 

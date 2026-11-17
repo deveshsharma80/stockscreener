@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, money, price, signed, store } from './Ticker.jsx';
 import { BOOK_EVENT, ORDERS_EVENT, QUOTES_EVENT } from './Orders.jsx';
-import { keysToPoll } from './liveFeed.js';
+import { isLive, keysToPoll } from './liveFeed.js';
+import { usePolling } from './settings.js';
 
 // Trades: every paper trade from entry to exit, with P&L, timing and your
 // journal notes (saved on the server, table "trade_journal").
@@ -86,6 +87,7 @@ export default function Journal({ subview = 'all' }) {
   }, [unlocked, secret, load]);
 
   // Live price for trades still open (every 5 s; slower when the tab is hidden)
+  const polling = usePolling();
   const openKeys = useMemo(() => [...new Set((data?.trips || []).filter((t) => t.status === 'OPEN').map((t) => t.key))].join(','), [data]);
   // Prices shared by the live stream (or the Market page) count too
   useEffect(() => {
@@ -104,7 +106,7 @@ export default function Journal({ subview = 'all' }) {
     let timer;
     const tick = async () => {
       try {
-        const pollKeys = keysToPoll(openKeys); // streamed ones arrive by themselves
+        const pollKeys = isLive() ? keysToPoll(openKeys) : openKeys; // streamed ones arrive by themselves
         if (pollKeys) {
           const j = await api(secret, 'quotes', { params: { keys: pollKeys } });
           if (alive) setQuotes((x) => ({ ...x, ...j.quotes }));
@@ -113,14 +115,15 @@ export default function Journal({ subview = 'all' }) {
       } catch {
         /* open P&L stays unknown */
       }
-      if (alive) timer = setTimeout(tick, document.hidden ? 30_000 : 5_000);
+      // polling off (Tools → Settings): just this first load
+      if (alive && polling.on) timer = setTimeout(tick, document.hidden ? Math.max(30_000, polling.intervalMs) : polling.intervalMs);
     };
     tick();
     return () => {
       alive = false;
       clearTimeout(timer);
     };
-  }, [unlocked, openKeys, secret, load]);
+  }, [unlocked, openKeys, secret, load, polling.on, polling.intervalMs]);
 
   const notes = data?.notes || {};
   const today = istDate(new Date().toISOString());
