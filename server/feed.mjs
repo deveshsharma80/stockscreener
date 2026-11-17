@@ -15,9 +15,17 @@
 //    It learns the levels from the app: pushed on every change (POST /levels) and
 //    pulled at start, after each check, and every 3 hours (cp-levels).
 //
+// 3) NSE ticker — one Dhan live-feed connection (Mon–Fri 09:00–15:35), subscribed to
+//    the Market watchlist. When a tick reaches a waiting order's price (incl. SL / TP),
+//    it asks the app to check now (check-orders, with the tick it saw) — about a second.
+//    It reads the watchlist, waiting orders and the Dhan token from the app
+//    (GET /api/ticker?action=nse-feed with FEED_SECRET): at start, when the app says
+//    something changed (POST /nse-changed), every 10 min in market hours, and at 08:58.
+//
 // HTTP (127.0.0.1:PORT, published through Caddy as https://feed.<domain>):
 //   GET  /health          short public status
-//   POST /levels          app → server: current levels (header x-feed-secret)
+//   POST /levels          app → server: current crypto levels (header x-feed-secret)
+//   POST /nse-changed     app → server: NSE watchlist / orders / token changed (header x-feed-secret)
 //   GET  /status          full status            (only from this machine)
 //   POST /run/<job>       run a job now           (only from this machine)
 import http from 'node:http';
@@ -46,11 +54,13 @@ const ago = (t) => (t ? Math.round((Date.now() - t) / 1000) : null);
 
 // ------------------------------------------------------------------ calling the app
 
-async function callApp(path, { timeoutMs = 70_000 } = {}) {
-  const url = `${APP}${path}${path.includes('?') ? '&' : '?'}secret=${encodeURIComponent(CRON_SECRET)}`;
+async function callApp(path, { timeoutMs = 70_000, feedAuth = false } = {}) {
+  const url = feedAuth ? `${APP}${path}` : `${APP}${path}${path.includes('?') ? '&' : '?'}secret=${encodeURIComponent(CRON_SECRET)}`;
   const t0 = Date.now();
   try {
-    const r = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'stockhits-feed' }, signal: AbortSignal.timeout(timeoutMs) });
+    const headers = { accept: 'application/json', 'user-agent': 'stockhits-feed' };
+    if (feedAuth) headers['x-feed-secret'] = FEED_SECRET;
+    const r = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
     const text = await r.text();
     let json = null;
     try {
@@ -104,8 +114,14 @@ async function runJob(name, why = 'schedule') {
     sent = Object.keys(seenHits);
     if (sent.length) path += `&seen=${encodeURIComponent(sent.map((s) => `${s}:${seenHits[s].price}:${seenHits[s].at}`).join(','))}`;
   }
+  let nseSent = [];
+  if (name === 'nse-check-orders') {
+    nseSent = Object.keys(nse.seen);
+    if (nseSent.length) path += `&seen=${encodeURIComponent(nseSent.map((k) => `${k}|${nse.seen[k].price}|${nse.seen[k].at}`).join(','))}`;
+  }
   const r = await callApp(path);
   if (r.ok) for (const s of sent) delete seenHits[s]; // keep them for the next try if the check failed
+  if (r.ok) for (const k of nseSent) delete nse.seen[k];
   st.running = false;
   st.count++;
   if (!r.ok) st.fails++;
@@ -113,6 +129,7 @@ async function runJob(name, why = 'schedule') {
   st.last = { at: Date.now(), why, ok: r.ok, status: r.status, ms: r.ms, summary };
   log(`${r.ok ? 'OK  ' : 'FAIL'} ${name} (${why}, ${r.ms} ms): ${summary}`);
   if (name === 'cp-check') await afterCheck(r.json);
+  if (name === 'nse-check-orders' && r.ok && r.json?.orders?.events?.length) nseScheduleRefresh('orders filled');
   if (st.again) {
     st.again = false;
     setTimeout(() => runJob(name, 'again'), 500);
@@ -133,6 +150,7 @@ function scheduleNextMinute() {
       }
     }
     if (t.m === 37 && t.h % 3 === 0) pullLevels('every 3 h');
+    nseTick(t);
     if (t.h === 3 && t.m === 3) loadPerps();
     scheduleNextMinute();
   }, next - now);
@@ -283,6 +301,250 @@ setInterval(() => {
   }
 }, 30_000);
 
+
+// ------------------------------------------------------------------ NSE ticker (Dhan live feed)
+
+const DHAN_WS = process.env.DHAN_FEED_WS || 'wss://api-feed.dhan.co';
+// Dhan's numeric exchange segments in the binary packets
+const SEG = { 0: 'IDX_I', 1: 'NSE_EQ', 2: 'NSE_FNO', 3: 'NSE_CURRENCY', 4: 'BSE_EQ', 5: 'MCX_COMM', 7: 'BSE_CURRENCY', 8: 'BSE_FNO' };
+// packet sizes in bytes by response code (header 8 + payload), from Dhan's docs
+const PACKET = { 2: 16, 4: 50, 5: 12, 6: 16, 7: 8, 8: 162, 50: 10 };
+const DISCONNECT_REASON = { 805: 'too many connections (Dhan allows 5)', 806: 'Data API subscription not active', 807: 'access token expired', 808: 'invalid client ID', 809: 'authentication failed' };
+
+const nse = {
+  watch: [], // [{ key, segment, securityId, symbol }]
+  orders: [], // waiting orders incl. SL / TP
+  dhan: null, // { clientId, accessToken, expiresAt }
+  market: null,
+  ws: null,
+  state: 'idle', // idle | closed-hours | connecting | live | reconnecting | no-token | error
+  note: '',
+  subKey: '',
+  lastMsg: null,
+  since: null,
+  reconnects: 0,
+  ticks: 0,
+  prices: {}, // key → { ltp, at, prevClose }
+  seen: {}, // key → first tick that reached an order's price (sent with the check)
+  lastFire: 0,
+  hits: [], // recent, newest first
+  refreshedAt: null,
+  refreshTimer: null,
+  backoff: 3_000,
+};
+
+const nseHours = (t = istParts()) => !['Sat', 'Sun'].includes(t.wd) && t.h * 60 + t.m >= 9 * 60 && t.h * 60 + t.m <= 15 * 60 + 35;
+
+async function nseRefresh(why) {
+  const r = await callApp('/api/ticker?action=nse-feed', { timeoutMs: 20_000, feedAuth: true });
+  if (!r.ok || !r.json) {
+    log(`NSE: could not read the watchlist from the app (${why}): HTTP ${r.status} ${r.json?.error || r.text}`);
+    return;
+  }
+  const j = r.json;
+  const tokenChanged = (j.dhan?.accessToken || '') !== (nse.dhan?.accessToken || '');
+  nse.watch = (j.watch || []).filter((w) => w.segment && w.securityId);
+  nse.orders = j.orders || [];
+  nse.dhan = j.dhan || null;
+  nse.market = j.market || null;
+  nse.refreshedAt = Date.now();
+  log(`NSE (${why}): ${nse.watch.length} watchlist instruments, ${nse.orders.length} waiting orders${tokenChanged ? ' · Dhan token updated' : ''}`);
+  nseConnectIfNeeded(tokenChanged);
+}
+
+function nseScheduleRefresh(why) {
+  clearTimeout(nse.refreshTimer);
+  nse.refreshTimer = setTimeout(() => nseRefresh(why), 800); // a burst of changes → one read
+}
+
+/** Every minute from the scheduler. */
+function nseTick(t) {
+  if (t.h === 8 && t.m === 58) nseRefresh('before the open');
+  else if (nseHours(t) && t.m % 10 === 5) nseRefresh('every 10 min');
+  nseConnectIfNeeded(false);
+}
+
+function nseClose(note) {
+  const ws = nse.ws;
+  nse.ws = null;
+  nse.subKey = '';
+  if (ws) {
+    try {
+      ws.send(JSON.stringify({ RequestCode: 12 }));
+    } catch {}
+    try {
+      ws.close();
+    } catch {}
+  }
+  if (note) nse.note = note;
+}
+
+function nseConnectIfNeeded(force) {
+  if (!nseHours()) {
+    if (nse.ws) {
+      log('NSE: market hours over — closing the Dhan feed');
+      nseClose();
+    }
+    nse.state = 'closed-hours';
+    return;
+  }
+  if (!nse.watch.length) {
+    if (nse.ws) nseClose();
+    nse.state = 'idle';
+    nse.note = 'watchlist is empty';
+    return;
+  }
+  if (!nse.dhan?.accessToken) {
+    if (nse.ws) nseClose();
+    nse.state = 'no-token';
+    nse.note = 'connect Dhan in the app (Market → Dhan connection)';
+    return;
+  }
+  if (nse.dhan.expiresAt && nse.dhan.expiresAt < Date.now()) {
+    if (nse.ws) nseClose();
+    nse.state = 'no-token';
+    nse.note = 'Dhan token expired — renew it in the app (Market → Dhan connection)';
+    return;
+  }
+  const key = nse.watch.map((w) => w.key).sort().join(',');
+  if (!force && nse.ws && key === nse.subKey) return; // already on exactly this list
+  if (!force && nse.ws && nse.state === 'connecting') return;
+  nseOpen(key);
+}
+
+function nseOpen(subKey) {
+  nseClose();
+  const { clientId, accessToken } = nse.dhan;
+  const url = `${DHAN_WS}?version=2&token=${encodeURIComponent(accessToken)}&clientId=${encodeURIComponent(clientId)}&authType=2`;
+  nse.state = 'connecting';
+  nse.note = '';
+  nse.subKey = subKey;
+  const ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+  nse.ws = ws;
+  let gotData = false;
+  ws.onopen = () => {
+    // Ticker mode (LTP + time), at most 100 instruments per message
+    const list = nse.watch.map((w) => ({ ExchangeSegment: w.segment, SecurityId: String(w.securityId) }));
+    for (let i = 0; i < list.length; i += 100) {
+      const part = list.slice(i, i + 100);
+      ws.send(JSON.stringify({ RequestCode: 15, InstrumentCount: part.length, InstrumentList: part }));
+    }
+    log(`NSE: Dhan feed open, subscribed ${list.length}: ${nse.watch.map((w) => w.symbol).join(' ')}`);
+  };
+  ws.onmessage = (ev) => {
+    if (nse.ws !== ws) return;
+    gotData = true;
+    nseOnMessage(ev.data);
+  };
+  ws.onerror = () => {};
+  ws.onclose = (ev) => {
+    if (nse.ws !== ws) return; // replaced or closed on purpose
+    nse.ws = null;
+    nse.subKey = '';
+    if (!nseHours()) {
+      nse.state = 'closed-hours';
+      return;
+    }
+    nse.reconnects++;
+    nse.state = nse.state === 'no-token' ? 'no-token' : 'reconnecting';
+    const wait = nse.backoff;
+    nse.backoff = Math.min(nse.backoff * 2, 60_000);
+    log(`NSE: Dhan feed closed (code ${ev.code}${ev.reason ? `, ${ev.reason}` : ''}${nse.note ? `, ${nse.note}` : ''}) — ${gotData ? 'reconnecting' : 're-reading the token and retrying'} in ${wait / 1000}s`);
+    setTimeout(async () => {
+      if (!gotData) await nseRefresh('after a failed connect');
+      nseConnectIfNeeded(true);
+    }, wait);
+  };
+}
+
+function nseKeyFor(segCode, id) {
+  const exact = `${SEG[segCode] || segCode}:${id}`;
+  if (nse.watch.some((w) => w.key === exact)) return exact;
+  const byId = nse.watch.filter((w) => String(w.securityId) === String(id));
+  return byId.length === 1 ? byId[0].key : exact;
+}
+
+function nseOnMessage(data) {
+  if (!(data instanceof ArrayBuffer)) return;
+  const v = new DataView(data);
+  let off = 0;
+  while (off + 8 <= v.byteLength) {
+    const code = v.getUint8(off);
+    const len = v.getInt16(off + 1, true);
+    const segCode = v.getUint8(off + 3);
+    const id = v.getInt32(off + 4, true);
+    const key = nseKeyFor(segCode, id);
+    if (code === 2 && off + 16 <= v.byteLength) {
+      // Ticker: LTP (float32) + last trade time
+      nseOnTick(key, Math.round(v.getFloat32(off + 8, true) * 100) / 100);
+    } else if (code === 6 && off + 16 <= v.byteLength) {
+      (nse.prices[key] ||= {}).prevClose = Math.round(v.getFloat32(off + 8, true) * 100) / 100;
+    } else if (code === 50 && off + 10 <= v.byteLength) {
+      const reason = v.getInt16(off + 8, true);
+      nse.note = `Dhan disconnected: ${DISCONNECT_REASON[reason] || `reason ${reason}`}`;
+      if (reason === 807 || reason === 809) nse.state = 'no-token';
+      log(`NSE: ${nse.note}`);
+    }
+    // next packet (Dhan usually sends one per message): known size, else the length field
+    const size = PACKET[code] || (len >= 8 ? len : 0);
+    if (!size || off + size > v.byteLength) break;
+    off += size;
+  }
+}
+
+function nseOnTick(key, ltp) {
+  if (!(ltp > 0)) return;
+  const now = Date.now();
+  nse.lastMsg = now;
+  nse.ticks++;
+  if (nse.state !== 'live') {
+    nse.state = 'live';
+    nse.since = now;
+    nse.backoff = 3_000;
+    log('NSE: live ticks arriving');
+  }
+  const p = (nse.prices[key] ||= {});
+  p.ltp = ltp;
+  p.at = now;
+  const hits = nse.orders.filter((o) => o.key === key && (o.direction === 'up' ? ltp >= o.triggerPrice : ltp <= o.triggerPrice) && now >= Date.parse(o.createdAt || 0));
+  if (!hits.length) return;
+  if (!nse.seen[key]) nse.seen[key] = { price: ltp, at: now }; // the first tick that reached it
+  if (now - nse.lastFire < 3_000) return; // one check covers every instrument
+  nse.lastFire = now;
+  const what = hits.map((o) => `${o.symbol} ${o.kind ? o.kind : o.side === 'BUY' ? 'buy' : 'sell'} ${o.direction === 'up' ? '≥' : '≤'} ${o.triggerPrice}`).join(' · ');
+  nse.hits.unshift({ at: now, ltp, what });
+  nse.hits.length = Math.min(nse.hits.length, 30);
+  log(`NSE HIT at ${ltp}: ${what} → asking the app to check now`);
+  runJob('nse-check-orders', `tick ${hits[0].symbol}`);
+}
+
+function nseStatus() {
+  const bySym = Object.fromEntries(nse.watch.map((w) => [w.key, w.symbol]));
+  return {
+    state: nse.state,
+    note: nse.note || undefined,
+    marketHoursNow: nseHours(),
+    instruments: nse.watch.length,
+    waitingOrders: nse.orders.map((o) => `${o.symbol} ${o.kind || o.side} ${o.direction === 'up' ? '≥' : '≤'} ${o.triggerPrice}${bySym[o.key] ? '' : ' (not in watchlist: checked every minute)'}`),
+    ticks: nse.ticks,
+    lastTickSecondsAgo: ago(nse.lastMsg),
+    reconnects: nse.reconnects,
+    tokenExpires: nse.dhan?.expiresAt ? `${istParts(new Date(nse.dhan.expiresAt)).text} IST` : null,
+    refreshedSecondsAgo: ago(nse.refreshedAt),
+    prices: Object.fromEntries(nse.watch.map((w) => [w.symbol, nse.prices[w.key]?.ltp != null ? { ltp: nse.prices[w.key].ltp, secondsAgo: ago(nse.prices[w.key].at) } : null])),
+    recentHits: nse.hits.map((h) => ({ at: `${istParts(new Date(h.at)).text} IST`, ltp: h.ltp, what: h.what })),
+  };
+}
+
+// no ticks for 2 minutes during market hours while subscribed → reconnect
+setInterval(() => {
+  if (nse.ws && nse.state === 'live' && nseHours() && ago(nse.lastMsg) > 120) {
+    log('NSE: no ticks for 2 min — reconnecting');
+    nseConnectIfNeeded(true);
+  }
+}, 30_000);
+
 // ------------------------------------------------------------------ HTTP
 
 const isLocal = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) && !req.headers['x-forwarded-for'];
@@ -310,6 +572,7 @@ function status() {
       ])
     ),
     recentHits: events.map((e) => ({ at: `${istParts(new Date(e.at)).text} IST`, price: e.price, hits: e.hits })),
+    nse: nseStatus(),
   };
 }
 
@@ -328,6 +591,7 @@ http
         healthy: watcherHealthy(),
         watching: watchedSymbols().length,
         jobsFailingNow: Object.entries(runs).filter(([, r]) => r.last && !r.last.ok).map(([k]) => k),
+        nse: { state: nse.state, instruments: nse.watch.length, lastTickSecondsAgo: ago(nse.lastMsg) },
         uptimeMin: Math.round((Date.now() - started) / 60_000),
       });
     }
@@ -345,11 +609,18 @@ http
       });
       return;
     }
+    if (req.method === 'POST' && url.pathname === '/nse-changed') {
+      if (!FEED_SECRET || req.headers['x-feed-secret'] !== FEED_SECRET) return send(res, 401, { ok: false, error: 'bad secret' });
+      req.resume();
+      nseScheduleRefresh('app: changed');
+      return send(res, 200, { ok: true });
+    }
     if (!isLocal(req)) return send(res, 404, { ok: false });
     if (req.method === 'GET' && url.pathname === '/status') return send(res, 200, status());
     const m = url.pathname.match(/^\/run\/([\w-]+)$/);
     if (req.method === 'POST' && m) {
       if (m[1] === 'levels') return pullLevels('by hand').then(() => send(res, 200, status().levels));
+      if (m[1] === 'nse') return nseRefresh('by hand').then(() => send(res, 200, nseStatus()));
       if (!JOBS[m[1]]) return send(res, 404, { ok: false, error: `jobs: ${Object.keys(JOBS).join(', ')}, levels` });
       return runJob(m[1], 'by hand').then((r) => send(res, 200, r));
     }
@@ -363,6 +634,7 @@ if (!CRON_SECRET) log('WARNING: CRON_SECRET is not set — the app will refuse e
 if (!FEED_SECRET) log('WARNING: FEED_SECRET is not set — the app cannot push levels; only pulls will be used.');
 await loadPerps();
 await pullLevels('start');
+await nseRefresh('start');
 scheduleNextMinute();
 process.on('SIGTERM', () => {
   log('stopping');

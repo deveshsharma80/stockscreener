@@ -45,7 +45,8 @@ import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
 import { PRODUCTS, addTrade, inSquareOffWindow, squareOffLabel, checkFunds, computeBook, deleteTrades, productFor, readAccount, readTrades, resetAccount, resetBucket, setCapital, validateOrder } from '../lib/paper.js';
 import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../lib/journal.js';
-import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
+import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, parseSeenTicks, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
+import { isFeedServer, notifyNse } from '../lib/feed.js';
 import {
   DhanError,
   SEGMENTS,
@@ -78,6 +79,11 @@ export default async function handler(req, res) {
     }
     const body = req.method === 'POST' ? parseBody(req) || {} : {};
     const action = req.method === 'POST' ? body.action : req.query?.action;
+    // The feed server (Vultr) reads what to watch with its own secret; everything else as before.
+    if (action === 'nse-feed') {
+      if (!isFeedServer(req)) throw new HttpError(401, 'Wrong feed secret');
+      return res.json({ ok: true, ...(await nseFeedState()) });
+    }
     checkSecret(req, { cron: action === 'check-orders' }); // the scheduler may use CRON_SECRET
 
     switch (`${req.method} ${action}`) {
@@ -106,11 +112,17 @@ export default async function handler(req, res) {
         const pendingKeys = openKeys(await readOrders());
         const q = await quotes(req.query?.keys, pendingKeys);
         const orders = await checkOrders({ quotes: q.quotes });
+        if (orders.events?.length) await notifyNse('orders filled');
         return res.json({ ok: true, ...q, orders, market: marketStatus(), at: new Date().toISOString() });
       }
       case 'GET check-orders':
       case 'POST check-orders':
-        return res.json({ ok: true, orders: await checkOrders({ fresh: true }), market: marketStatus(), at: new Date().toISOString() });
+      {
+        // seen = ticks the feed server watched reach an order's price (key|price|time,…)
+        const orders = await checkOrders({ fresh: true, seen: parseSeenTicks(req.query?.seen || body.seen) });
+        if (orders.events?.length) await notifyNse('orders filled');
+        return res.json({ ok: true, orders, market: marketStatus(), at: new Date().toISOString() });
+      }
       case 'GET orders':
         return res.json({ ok: true, ...(await ordersView()) });
       case 'GET journal': {
@@ -147,22 +159,29 @@ export default async function handler(req, res) {
         return res.json({ ok: true, ...(await resolveForOrder(req.query || {})) });
       case 'POST place-order': {
         const { order, rows, watchNote } = await placeTriggerOrder(body);
+        await notifyNse('order placed');
         return res.json({ ok: true, order, rows, watchNote, ...(await ordersView()) });
       }
       case 'POST set-exit': {
         const order = await placeExit(body);
+        await notifyNse('exit set');
         return res.json({ ok: true, order, ...(await ordersView()) });
       }
       case 'POST cancel-order': {
         const order = await cancelOrder(String(body.id || ''));
+        await notifyNse('order cancelled');
         return res.json({ ok: true, order, ...(await ordersView()) });
       }
       case 'POST connect': {
         const { profile: p, creds } = await connectToken(body);
+        await notifyNse('dhan token');
         return res.json({ ok: true, ...describeCreds(creds), profile: pickProfile(p) });
       }
-      case 'POST renew':
-        return res.json({ ok: true, ...describeCreds(await renewToken()) });
+      case 'POST renew': {
+        const creds = await renewToken();
+        await notifyNse('dhan token');
+        return res.json({ ok: true, ...describeCreds(creds) });
+      }
       case 'POST disconnect':
         await clearCredentials();
         return res.json({ ok: true, connected: false });
@@ -171,18 +190,27 @@ export default async function handler(req, res) {
         if (!symbol) throw new HttpError(400, 'Which stock? Send a symbol like SBIN');
         const inst = await findEquityBySymbol(symbol);
         if (!inst) throw new HttpError(404, `${symbol} wasn't found in Dhan's NSE/BSE equity list`);
-        return res.json({ ok: true, key: inst.key, symbol: inst.symbol, rows: await addToWatchlist(inst.key) });
+        const rows = await addToWatchlist(inst.key);
+        await notifyNse('watchlist');
+        return res.json({ ok: true, key: inst.key, symbol: inst.symbol, rows });
       }
-      case 'POST add':
-        return res.json({ ok: true, rows: await addToWatchlist(String(body.key || '')) });
-      case 'POST remove':
-        return res.json({ ok: true, rows: await removeFromWatchlist(String(body.key || '')) });
+      case 'POST add': {
+        const rows = await addToWatchlist(String(body.key || ''));
+        await notifyNse('watchlist');
+        return res.json({ ok: true, rows });
+      }
+      case 'POST remove': {
+        const rows = await removeFromWatchlist(String(body.key || ''));
+        await notifyNse('watchlist');
+        return res.json({ ok: true, rows });
+      }
       case 'GET paper':
         return res.json({ ok: true, ...(await paperBook()) });
       case 'POST trade': {
         const trade = await placePaperTrade({ key: body.key, side: body.side, qty: body.qty, product: body.product });
         const book = await paperBook();
-        await tidyExits(book); // closed by hand → its SL / TP go away
+        const gone = await tidyExits(book); // closed by hand → its SL / TP go away
+        if (gone?.length) await notifyNse('exits removed');
         return res.json({ ok: true, trade, ...book });
       }
       case 'POST paper-capital':
@@ -302,7 +330,7 @@ async function quotes(keysParam, extraKeys = []) {
 
 // ------------------------------------------------------------------ paper trading
 
-async function placePaperTrade({ key, side, qty, product, orderId }) {
+async function placePaperTrade({ key, side, qty, product, orderId, atPrice = null }) {
   key = String(key || '');
   side = String(side || '').toUpperCase();
   qty = Number(qty);
@@ -337,7 +365,8 @@ async function placePaperTrade({ key, side, qty, product, orderId }) {
     if (problem) throw new HttpError(400, problem, { kind: 'rules' });
   }
 
-  const quote = await getFillQuote(inst);
+  // A tick the feed server saw reach an order's price is the market price at that moment.
+  const quote = Number(atPrice) > 0 ? { ltp: Math.round(Number(atPrice) * 100) / 100 } : await getFillQuote(inst);
   const funds = checkFunds(book, { key, side, qty, price: quote.ltp, product });
   if (!funds.ok) {
     const f = (v) => v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
@@ -357,9 +386,9 @@ async function paperBook() {
 const ORDER_PRODUCT = 'EQ_INTRADAY';
 
 /** Check pending orders; never fails the request that asked (quotes keep flowing). */
-async function checkOrders({ quotes: known = {}, fresh = false } = {}) {
+async function checkOrders({ quotes: known = {}, fresh = false, seen = {} } = {}) {
   const squared = await squareOffIntraday({ force: fresh });
-  const r = await checkPending({ quotes: known, fresh });
+  const r = await checkPending({ quotes: known, fresh, seen });
   if (squared.length) r.events = [...squared, ...(r.events || [])];
   return r;
 }
@@ -396,24 +425,26 @@ async function squareOffIntraday({ force = false, now = Date.now() } = {}) {
   return events;
 }
 
-async function checkPending({ quotes: known = {}, fresh = false } = {}) {
+async function checkPending({ quotes: known = {}, fresh = false, seen = {} } = {}) {
   try {
     const r = await processOrders({
       quotes: known,
+      seen,
       fresh,
       marketOpen: marketStatus().open,
       fetchQuotes: async (keys) =>
         getQuotes(keys.map((k) => KEY_RE.exec(k)).filter(Boolean).map((m) => ({ segment: m[1], securityId: m[2] }))),
       fill: async (o) => {
+        const atPrice = o.viaTick || null; // set when a feed-server tick decided it
         if (!isExit(o)) {
-          const t = await placePaperTrade({ key: o.key, side: o.side, qty: o.qty, product: o.product || ORDER_PRODUCT, orderId: o.id });
+          const t = await placePaperTrade({ key: o.key, side: o.side, qty: o.qty, product: o.product || ORDER_PRODUCT, orderId: o.id, atPrice });
           if (o.sl != null || o.tp != null) await attachExits(o); // never fails the fill
           return t;
         }
         // Stop loss / take profit: close whatever is open right now
         const pos = (await paperBook()).positions.find((p) => p.key === o.key && p.qty !== 0);
         if (!pos || (o.side === 'SELL') !== pos.qty > 0) throw Object.assign(new Error('Position was already closed'), { cancelled: true });
-        return placePaperTrade({ key: o.key, side: o.side, qty: Math.abs(pos.qty), product: pos.product, orderId: o.id });
+        return placePaperTrade({ key: o.key, side: o.side, qty: Math.abs(pos.qty), product: pos.product, orderId: o.id, atPrice });
       },
       findTrade: async (id) => (await readTrades()).find((t) => t.orderId === id) || null,
     });
@@ -427,6 +458,22 @@ async function checkPending({ quotes: known = {}, fresh = false } = {}) {
   } catch (err) {
     return { events: [], pending: null, error: err.message, checkEveryMs: 30_000 };
   }
+}
+
+/**
+ * What the feed server watches: watchlist instruments, waiting orders (incl. SL / TP),
+ * the Dhan login for the live feed, and whether the market is open.
+ */
+async function nseFeedState() {
+  const [rows, orders, creds] = await Promise.all([readTable(WATCHLIST), readOrders({ fresh: true }), getCredentials({ fresh: true })]);
+  return {
+    market: marketStatus(),
+    watch: rows.map((r) => ({ key: r.key, segment: r.segment, securityId: String(r.securityId), symbol: r.symbol })),
+    orders: orders
+      .filter((o) => o.status === 'PENDING')
+      .map((o) => ({ id: o.id, key: o.key, symbol: o.symbol, kind: o.kind || null, side: o.side, direction: o.direction, triggerPrice: o.triggerPrice, createdAt: o.createdAt })),
+    dhan: creds?.accessToken ? { clientId: creds.clientId, accessToken: creds.accessToken, expiresAt: creds.expiresAt || null } : null,
+  };
 }
 
 /** After an at-price order fills: put its stop loss / take profit on the position. */
