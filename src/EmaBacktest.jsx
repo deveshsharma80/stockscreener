@@ -13,6 +13,9 @@ const EXITS = [
   ['twoR', 'Fixed 1:2', 'target = entry − 2 × risk'],
   ['hold', `Hold to ${PARAMS.exitBy}`, 'stop only, closed at ' + PARAMS.exitBy],
 ];
+const GAP_MS = 1500; // pause between stocks
+const RETRY_MS = [5000, 10000, 20000];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fmt = (v) => (v == null ? '—' : price.format(v));
 const fmtR = (r) => (r == null ? '—' : `${r > 0 ? '+' : ''}${r.toFixed(2)}R`);
 
@@ -157,36 +160,57 @@ export default function EmaBacktest() {
       setErr(firstOnly ? 'No stocks at 09:15 in this file.' : 'No rows found.');
       return;
     }
-    const jobs = jobsOf(parsed.list);
+    const label = `${f.name} · ${parsed.list.length} stock-days${firstOnly ? ' at 09:15' : ''}`;
+    setFile(`${f.name} · ${parsed.list.length} stock-days${firstOnly ? ` at 09:15 (${parsed.skipped} later hits left out)` : ''}`);
+    await runList(parsed.list, label, []);
+  };
+
+  /** Back-test `list` ({day, symbol}); `keep` = earlier results that stay as they are. */
+  const runList = async (list, label, keep) => {
+    const jobs = jobsOf(list);
     const total = jobs.length;
-    const rows = [];
+    const rows = [...keep];
     let done = 0;
     stopRef.current = false;
-    setResults([]);
-    setFile(`${f.name} · ${parsed.list.length} stock-days${firstOnly ? ` at 09:15 (${parsed.skipped} later hits left out)` : ''}`);
+    setResults([...rows]);
     setProgress({ done, total });
     const queue = [...jobs];
-    const worker = async () => {
-      while (queue.length && !stopRef.current) {
-        const job = queue.shift();
+    while (queue.length && !stopRef.current) {
+      const job = queue.shift();
+      for (let attempt = 0; ; attempt++) {
         try {
           const j = await api(secret, 'ema-backtest', { method: 'POST', body: job });
           rows.push(...j.rows);
+          break;
         } catch (e) {
+          // Dhan said "too many requests": wait longer and try the same stock again
+          if (/rate limit/i.test(e.message) && attempt < RETRY_MS.length && !stopRef.current) {
+            setProgress({ done, total, note: `Dhan asked to slow down — retrying ${job.symbol} in ${RETRY_MS[attempt] / 1000} s` });
+            await sleep(RETRY_MS[attempt]);
+            continue;
+          }
           rows.push(...job.days.map((day) => ({ day, symbol: job.symbol, status: 'error', note: e.message })));
+          break;
         }
-        done++;
-        setProgress({ done, total });
-        setResults([...rows]);
       }
-    };
-    await Promise.all([worker(), worker()]);
+      done++;
+      setProgress({ done, total });
+      setResults([...rows]);
+      if (queue.length) await sleep(GAP_MS); // one stock at a time, spaced out for Dhan
+    }
     setProgress(null);
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({ file: `${f.name} · ${parsed.list.length} stock-days${firstOnly ? ' at 09:15' : ''}`, rows }));
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ file: label, rows }));
     } catch {
       /* storage full or blocked: results stay on screen */
     }
+  };
+
+  // stock-days that failed for a reason worth retrying (not "not found in Dhan's list")
+  const failed = results.filter((r) => r.status === 'error' && !/not found/i.test(r.note || ''));
+  const retryFailed = () => {
+    const again = new Set(failed.map((r) => `${r.day}|${r.symbol}`));
+    runList(failed.map(({ day, symbol }) => ({ day, symbol })), file, results.filter((r) => !again.has(`${r.day}|${r.symbol}`)));
   };
 
   const sorted = useMemo(() => [...results].sort((a, b) => a.day.localeCompare(b.day) || a.symbol.localeCompare(b.symbol)), [results]);
@@ -248,10 +272,11 @@ export default function EmaBacktest() {
           </label>
           {progress && (
             <>
-              <span className="muted-cell">{progress.done} / {progress.total} stocks</span>
+              <span className="muted-cell">{progress.done} / {progress.total} stocks{progress.note ? ` · ${progress.note}` : ''}</span>
               <button className="btn" onClick={() => (stopRef.current = true)}>Stop</button>
             </>
           )}
+          {!!failed.length && !progress && secret && <button className="btn" onClick={retryFailed}>Retry {failed.length} failed</button>}
           {!!results.length && !progress && <button className="btn push" onClick={download}>Download CSV</button>}
         </div>
         <p className="muted-cell ema-bt-file">

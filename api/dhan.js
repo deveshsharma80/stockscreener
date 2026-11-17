@@ -101,7 +101,7 @@ export async function clearCredentials() {
 
 // ------------------------------------------------------------------ HTTP
 
-function classify(status, body) {
+function classify(status, body, path = '') {
   const code = String(body?.errorCode ?? body?.data?.errorCode ?? body?.code ?? '');
   const msg = String(body?.errorMessage ?? body?.data?.errorMessage ?? body?.message ?? body?.remarks ?? '');
   if (['DH-901', '807', '808', '809', '810'].includes(code) || status === 401) {
@@ -116,7 +116,12 @@ function classify(status, body) {
     return new DhanError('Dhan says Data APIs are not active on this account. Check your Data API subscription.', { status: 403, code, kind: 'plan' });
   }
   if (['DH-904', '805'].includes(code) || status === 429) {
-    return new DhanError('Dhan rate limit reached (quotes are limited to 1 request per second).', { status: 429, code, kind: 'rate' });
+    return new DhanError(
+      path.startsWith('/charts')
+        ? 'Dhan rate limit reached for candle data (too many requests per second). Retrying slower…'
+        : 'Dhan rate limit reached (quotes are limited to 1 request per second).',
+      { status: 429, code, kind: 'rate' }
+    );
   }
   if (['DH-905', '804', '813', '814'].includes(code)) {
     return new DhanError(`Dhan rejected the request${msg ? `: ${msg}` : ''}`, { status: 400, code, kind: 'input' });
@@ -150,7 +155,7 @@ async function dhanFetch(path, { method = 'GET', body, creds, headers = {} } = {
     /* not JSON */
   }
   const failed = !res.ok || json?.status === 'failure' || json?.status === 'failed' || json?.errorCode;
-  if (failed) throw classify(res.status, json || { errorMessage: text.slice(0, 200) });
+  if (failed) throw classify(res.status, json || { errorMessage: text.slice(0, 200) }, path);
   return json;
 }
 
@@ -629,6 +634,32 @@ export async function lookupInstrument(key) {
 // ------------------------------------------------------------------ candles
 
 const candleCache = new Map(); // "key|days" -> { at, data }
+
+// Candle requests are spaced CANDLE_GAP_MS apart within this server instance (the live
+// EMA check and backtests ask for many stocks in a row) and retried with growing pauses
+// when Dhan still answers "too many requests".
+const CANDLE_GAP_MS = 1100;
+const CANDLE_RETRY_MS = [2000, 4000, 7000, 10000];
+let candleChain = Promise.resolve();
+let lastCandleAt = 0;
+function candleFetch(body, creds) {
+  const run = async () => {
+    for (let attempt = 0; ; attempt++) {
+      const wait = lastCandleAt + CANDLE_GAP_MS - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      lastCandleAt = Date.now();
+      try {
+        return await dhanFetch('/charts/intraday', { method: 'POST', creds, body });
+      } catch (err) {
+        if (err.kind !== 'rate' || attempt >= CANDLE_RETRY_MS.length) throw err;
+        await new Promise((r) => setTimeout(r, CANDLE_RETRY_MS[attempt]));
+      }
+    }
+  };
+  const p = candleChain.then(run, run);
+  candleChain = p.catch(() => {});
+  return p;
+}
 const IST_MS = 330 * 60_000;
 const istStamp = (ms) => new Date(ms + IST_MS).toISOString().slice(0, 19).replace('T', ' ');
 
@@ -653,10 +684,8 @@ export async function getIntradayCandles(inst, { days = 5, from, to } = {}) {
     if (!creds) throw new DhanError('Connect your Dhan account first (Dhan connection → paste access token).', { status: 400, kind: 'auth' });
     const now = Date.now();
     const fromIst = from || new Date(now + IST_MS - days * 86_400_000).toISOString().slice(0, 10);
-    const json = await dhanFetch('/charts/intraday', {
-      method: 'POST',
-      creds,
-      body: {
+    const json = await candleFetch(
+      {
         securityId: String(inst.securityId),
         exchangeSegment: inst.segment,
         instrument: inst.instrument,
@@ -665,7 +694,8 @@ export async function getIntradayCandles(inst, { days = 5, from, to } = {}) {
         fromDate: `${fromIst} 09:00:00`,
         toDate: to ? `${to} 15:31:00` : istStamp(now),
       },
-    });
+      creds
+    );
     const d = json?.data && Array.isArray(json.data.timestamp) ? json.data : json || {};
     const ts = Array.isArray(d.timestamp) ? d.timestamp : [];
     data = ts
