@@ -1444,3 +1444,22 @@ a.btn.cp-chart-trade { text-decoration: none; display: inline-flex; align-items:
 .set-every { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .set-every select:disabled { opacity: 0.5; }
 .set-notes { margin: 6px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.55; }
+
+/* ---------- Signals → EMA Rejection ---------- */
+.ema-day { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.ema-table td { vertical-align: top; }
+.ema-st { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.ema-st.rejected { background: #b91c1c; color: #fff; }
+.ema-st.touched { background: #f59e0b; color: #1c1917; }
+.ema-st.watching { background: var(--surface-2); color: var(--text); }
+.ema-st.broke-out { background: #15803d; color: #fff; }
+.ema-st.error { background: #7f1d1d; color: #fff; }
+.ema-note { font-size: 12px; margin-top: 3px; max-width: 280px; white-space: normal; }
+.ema-times { white-space: nowrap; font-size: 12px; }
+.ema-act { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+tr.ema-alert td { background: color-mix(in srgb, #b91c1c 10%, transparent); }
+.toasts-setup { bottom: 96px; }
+.ema-emas { line-height: 1.35; } .ema-table th, .ema-table td { padding-left: 10px; padding-right: 10px; }
+
+.seg.ema-views { margin: 0 0 12px; }
+.ema-bt-file { margin: 0; padding: 10px 16px 12px; font-size: 13px; }

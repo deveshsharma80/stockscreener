@@ -47,6 +47,7 @@ import { PRODUCTS, addTrade, inSquareOffWindow, squareOffLabel, checkFunds, comp
 import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../lib/journal.js';
 import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, parseSeenTicks, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import { isFeedServer, notifyNse, streamToken } from '../lib/feed.js';
+import { runEmaSetups } from '../lib/emasetup.js';
 import {
   DhanError,
   SEGMENTS,
@@ -84,7 +85,7 @@ export default async function handler(req, res) {
       if (!isFeedServer(req)) throw new HttpError(401, 'Wrong feed secret');
       return res.json({ ok: true, ...(await nseFeedState()) });
     }
-    checkSecret(req, { cron: action === 'check-orders' }); // the scheduler may use CRON_SECRET
+    checkSecret(req, { cron: action === 'check-orders' || action === 'ema-setups-run' }); // the scheduler may use CRON_SECRET
 
     switch (`${req.method} ${action}`) {
       case 'GET status':
@@ -125,6 +126,10 @@ export default async function handler(req, res) {
       }
       case 'GET orders':
         return res.json({ ok: true, ...(await ordersView()) });
+      case 'GET ema-setups-run':
+      case 'POST ema-setups-run':
+        // gap-down EMA-rejection check (scheduler: a few seconds after each 5-minute close)
+        return res.json({ ok: true, ...(await runEmaSetups()) });
       case 'GET feed-token':
         // live prices straight from the feed server (Vultr); null → pages keep polling
         return res.json({ ok: true, stream: streamToken() });

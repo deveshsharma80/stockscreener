@@ -6,6 +6,8 @@
 //      crypto-scan       every hour at :00                    (daily movers ≥ 40 %)
 //      bb-scan           01:32 05:32 09:32 13:32 17:32 21:32  (4h Bollinger + RSI)
 //      cp-check          safety net: every 6 h, or every 30 min while the watcher is not live
+//      ema-setups        Mon–Fri every 5 min 09:20–13:35, 8 s after each 5-minute close
+//                        (gap-down EMA-rejection setups; new alerts go to open pages)
 //
 // 2) Crypto watcher — follows Binance trades tick by tick for coins that have an
 //    open paper position or an "at price" order. When the price reaches an order
@@ -79,6 +81,8 @@ const summaries = {
   'nse-check-orders': (j) => j && `market ${j.market?.open === false ? 'closed' : j.market?.label || j.market?.status || 'open'}, events ${j.orders?.events?.length ?? 0}, waiting orders ${j.orders?.pending ?? 0}`,
   'crypto-scan': (j) => j && `checked ${j.checked ?? '?'} pairs, ≥${j.minPct}% today: ${(j.matches || []).map((m) => m.symbol).join(' ') || 'none'}, newly added ${j.added?.length ?? 0}`,
   'bb-scan': (j) => j && `checked ${j.checked}/${j.total}, hits ${j.hits}, latest candle ${(j.latestHits || []).map((h) => h.symbol).join(' ') || 'none'}`,
+  'ema-setups': (j) =>
+    j && `${j.checked} stocks · ${(j.setups || []).map((x) => `${x.symbol} ${x.status}`).join(', ') || 'none from the screener today'}${j.newAlerts?.length ? ` · NEW ALERT ${j.newAlerts.map((a) => a.symbol).join(' ')}` : ''}`,
   'cp-check': (j) =>
     j &&
     `positions ${j.checked ?? 0}, orders filled ${j.ordersFilled?.length ?? 0}, failed ${j.ordersFailed?.length ?? 0}, SL/TP ${j.exited?.length ?? 0}, liquidated ${j.liquidated?.length ?? 0}`,
@@ -94,6 +98,12 @@ const JOBS = {
   },
   'crypto-scan': { path: '/api/crypto?action=scan&minPct=40', when: (t) => t.m === 0, note: 'hourly at :00' },
   'bb-scan': { path: '/api/crypto?action=bb-scan', when: (t) => t.m === 32 && [1, 5, 9, 13, 17, 21].includes(t.h), note: '01:32 05:32 09:32 13:32 17:32 21:32' },
+  'ema-setups': {
+    path: '/api/ticker?action=ema-setups-run',
+    when: (t) => !['Sat', 'Sun'].includes(t.wd) && t.m % 5 === 0 && t.h * 60 + t.m >= 9 * 60 + 20 && t.h * 60 + t.m <= 13 * 60 + 35,
+    delayMs: 8_000, // let Dhan finish the candle that just closed
+    note: 'Mon–Fri every 5 min 09:20–13:35 (8 s after each candle close)',
+  },
   'cp-check': {
     path: '/api/crypto?action=cp-check',
     when: (t) => (t.m === 7 && t.h % 6 === 0) || (t.m % 30 === 15 && !watcherHealthy()),
@@ -132,6 +142,10 @@ async function runJob(name, why = 'schedule') {
   st.last = { at: Date.now(), why, ok: r.ok, status: r.status, ms: r.ms, summary };
   log(`${r.ok ? 'OK  ' : 'FAIL'} ${name} (${why}, ${r.ms} ms): ${summary}`);
   if (name === 'cp-check') await afterCheck(r.json);
+  if (name === 'ema-setups' && r.ok && r.json) {
+    // pages refresh the EMA Rejection tab; new alerts pop up
+    streamBroadcast('setups', { day: r.json.day, newAlerts: r.json.newAlerts || [] });
+  }
   if (name === 'nse-check-orders' && r.ok && r.json?.orders?.events?.length) {
     nseScheduleRefresh('orders filled');
     streamBroadcast('orders', { events: r.json.orders.events, pending: r.json.orders.pending });
@@ -150,7 +164,10 @@ function scheduleNextMinute() {
     const t = istParts();
     for (const [name, job] of Object.entries(JOBS)) {
       try {
-        if (job.when(t)) runJob(name);
+        if (job.when(t)) {
+          if (job.delayMs) setTimeout(() => runJob(name), Math.max(0, job.delayMs - 2_000));
+          else runJob(name);
+        }
       } catch (e) {
         log('scheduler error', name, e.message);
       }

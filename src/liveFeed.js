@@ -13,6 +13,7 @@ import { api } from './Ticker.jsx';
 import { QUOTES_EVENT, emitOrders } from './Orders.jsx';
 
 export const LIVE_EVENT = 'stockhits:live'; // the stream's status changed
+export const SETUP_EVENT = 'stockhits:setups'; // EMA-rejection check finished (detail.newAlerts)
 
 const feed = {
   status: 'off', // off | connecting | open | unavailable | error
@@ -100,6 +101,11 @@ async function start(secret, force = false) {
       if (!Object.keys(quotes).length) return;
       for (const [k, q] of Object.entries(quotes)) feed.quotes[k] = { ...feed.quotes[k], ...q };
       window.dispatchEvent(new CustomEvent(QUOTES_EVENT, { detail: { quotes, source: 'feed' } }));
+    } catch {}
+  });
+  es.addEventListener('setups', (e) => {
+    try {
+      window.dispatchEvent(new CustomEvent(SETUP_EVENT, { detail: JSON.parse(e.data) }));
     } catch {}
   });
   es.addEventListener('orders', (e) => {

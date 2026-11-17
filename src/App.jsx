@@ -10,6 +10,9 @@ import CandleData from './CandleData.jsx';
 import CryptoPaper, { CryptoPositions } from './CryptoPaper.jsx';
 import CryptoLivePnl from './CryptoLivePnl.jsx';
 import FirstHits from './FirstHits.jsx';
+import EmaSetups from './EmaSetups.jsx';
+import { isEmaScan } from './emasetup.js';
+import { SETUP_EVENT } from './liveFeed.js';
 import Calculator from './Calculator.jsx';
 import Settings from './Settings.jsx';
 import BBScan from './BBScan.jsx';
@@ -30,6 +33,7 @@ export const SECTIONS = [
     tabs: [
       ['hits', 'Hits', 'Signals received from Chartink through the webhook'],
       ['firsthit', 'First Hit', 'Each stock’s first hit of the day, across your scans'],
+      ['emarej', 'EMA Rejection', 'Gap-down stocks (Futures April 2025) rejected at the 9 / 26 EMA on 5-minute candles — short setups'],
       ['screener', 'Screener', 'Every stock your scans have picked, one row per stock'],
       ['setup', 'Webhook setup', 'Connect Chartink and test the webhook'],
     ],
@@ -239,17 +243,20 @@ function Signals({ tab, actionsEl }) {
     return () => clearInterval(t);
   }, [auto, load]);
 
+  // The EMA-rejection screener has its own tab and is kept out of every other tab
+  const emaRows = useMemo(() => data.rows.filter((r) => isEmaScan(r.ScanName)), [data.rows]);
+  const allRows = useMemo(() => data.rows.filter((r) => !isEmaScan(r.ScanName)), [data.rows]);
   const scanNames = useMemo(
-    () => [...new Set(data.rows.map((r) => r.ScanName).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-    [data.rows]
+    () => [...new Set(allRows.map((r) => r.ScanName).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [allRows]
   );
-  const hasNoScanRows = useMemo(() => data.rows.some((r) => !r.ScanName), [data.rows]);
+  const hasNoScanRows = useMemo(() => allRows.some((r) => !r.ScanName), [allRows]);
   const filtersOn = filter.trim() || hf.period !== 'all' || hf.scan || hf.tFrom || hf.tTo;
 
   const rows = useMemo(() => {
     const q = filter.trim().toUpperCase();
     const inPeriod = periodMatcher(hf);
-    const list = data.rows.filter((r) => {
+    const list = allRows.filter((r) => {
       if (q && !(r.StockSymbol.includes(q) || String(r.StockID).toUpperCase().includes(q) || String(r.ScanName || '').toUpperCase().includes(q))) return false;
       if (hf.scan === NO_SCAN ? r.ScanName : hf.scan && r.ScanName !== hf.scan) return false;
       if (!inPeriod(istDateOf(r.HitTime))) return false;
@@ -267,22 +274,22 @@ function Signals({ tab, actionsEl }) {
       const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
       return dir === 'asc' ? c : -c;
     });
-  }, [data.rows, filter, sort, hf]);
+  }, [allRows, filter, sort, hf]);
 
   const stats = useMemo(() => {
-    const all = data.rows;
+    const all = allRows;
     if (!all.length) return null;
     const today = istToday();
     const todays = all.filter((r) => istDateOf(r.HitTime) === today);
     return {
-      hits: data.total,
+      hits: all.length,
       today: todays.length,
       symbols: new Set(all.map((r) => r.StockSymbol)).size,
       firstToday: new Set(todays.map((r) => r.StockSymbol)).size,
       scansToday: new Set(todays.map((r) => r.ScanName).filter(Boolean)).size,
       last: all[0],
     };
-  }, [data]);
+  }, [allRows]);
 
   const toggleSort = (key) =>
     setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }));
@@ -305,9 +312,11 @@ function Signals({ tab, actionsEl }) {
       {error && <div className="alert">⚠ {error}</div>}
 
       <TickerLinkProvider>
-      {tab === 'firsthit' && <FirstHits rows={data.rows} loading={loading} />}
+      {tab === 'firsthit' && <FirstHits rows={allRows} loading={loading} />}
 
-      {tab === 'screener' && <Screener rows={data.rows} total={data.total} loading={loading} lastLoad={lastLoad} />}
+      {tab === 'emarej' && <EmaSetups rows={emaRows} />}
+
+      {tab === 'screener' && <Screener rows={allRows} total={allRows.length} loading={loading} lastLoad={lastLoad} />}
 
       {tab === 'setup' && (
         <>
@@ -1056,6 +1065,7 @@ function Shell({ auth, onLogout }) {
         </div>
 
         <OrderToasts />
+        <SetupToasts />
         <div className="content">
           {section.id === 'signals' && <Signals tab={tab} actionsEl={actionsEl} />}
           {section.id === 'market' && <Ticker subview={tab} actionsEl={actionsEl} />}
@@ -1116,6 +1126,44 @@ function useOrderWatcher(active) {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [active]);
+}
+
+/** Pop-up when the EMA-rejection check finds a new short setup (Signals → EMA Rejection). */
+function SetupToasts() {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    const on = (e) => {
+      const fresh = e.detail?.newAlerts || [];
+      if (!fresh.length) return;
+      setItems((list) => [...list, ...fresh.map((a) => ({ key: `${a.day}:${a.symbol}`, a }))].slice(-4));
+      for (const a of fresh) {
+        try {
+          if ('Notification' in window && Notification.permission === 'granted' && document.hidden)
+            new Notification(`EMA rejection: ${a.symbol}`, { body: `Short below ₹${a.entry} · SL ₹${a.sl} · target ₹${a.target}` });
+        } catch {}
+      }
+    };
+    window.addEventListener(SETUP_EVENT, on);
+    return () => window.removeEventListener(SETUP_EVENT, on);
+  }, []);
+  if (!items.length) return null;
+  const close = (key) => setItems((list) => list.filter((x) => x.key !== key));
+  return (
+    <div className="toasts toasts-setup" role="status" aria-live="polite">
+      {items.map(({ key, a }) => (
+        <div key={key} className="toast bad">
+          <span>
+            ▼ EMA rejection at {a.alertAt}: <b>{a.symbol}</b> — short below ₹{a.entry}, SL ₹{a.sl}, target ₹{a.target}
+            {a.rr ? ` (1 : ${a.rr})` : ''}
+          </span>
+          <span className="toast-actions">
+            <a className="link" href="#/signals/emarej" onClick={() => close(key)}>Open</a>
+            <button className="link" onClick={() => close(key)} aria-label="Dismiss">×</button>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** Pop-up notes when a trigger order fills, fails or expires. */
