@@ -6,7 +6,7 @@ import BbBacktest from './BbBacktest.jsx';
 // adding a row here: [id, name, one-line description, component].
 const STRATEGIES = [
   ['ema-rejection', 'EMA Rejection', 'Gap-down stocks (“Futures April 2025”) whose bounce is rejected at the 9 / 26 EMA on 5-minute candles — short.', EmaBacktest],
-  ['bb-breakout', 'Bollinger Breakout', 'First 5-minute candle green and above the upper Bollinger Band, then a candle breaks its high — long.', BbBacktest],
+  ['bb-breakout', 'Bollinger First Candle', 'First 5-minute candle green and above the upper Bollinger Band; a later candle eats half of it — short (long breakout as an option).', BbBacktest],
 ];
 const KEY = 'stockhits.backtestStrategy';
 

@@ -131,7 +131,14 @@ export default function StrategyBacktest({ config }) {
   const secret = store.get(SECRET_KEY);
   const saved = useMemo(() => load(SAVE) || (C.legacyKey ? load(C.legacyKey) : null), [SAVE]); // eslint-disable-line react-hooks/exhaustive-deps
   const defaults = Object.fromEntries((C.params || []).map((p) => [p.key, p.def]));
-  const [params, setParams] = useState(() => ({ ...defaults, ...(saved?.params || {}) }));
+  const [params, setParams] = useState(() => {
+    // saved settings, minus any choice that no longer exists
+    const ok = Object.fromEntries(Object.entries(saved?.params || {}).filter(([k, v]) => {
+      const f = (C.params || []).find((p) => p.key === k);
+      return f && (f.type !== 'select' || f.options.some(([o]) => o === v));
+    }));
+    return { ...defaults, ...ok };
+  });
   const [firstOnly, setFirstOnly] = useState(true);
   const [file, setFile] = useState(saved?.file || '');
   const [list, setList] = useState(saved?.list || []);
