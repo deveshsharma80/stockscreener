@@ -1466,3 +1466,5 @@ tr.ema-alert td { background: color-mix(in srgb, #b91c1c 10%, transparent); }
 .auto-rules { margin: 0; padding: 10px 16px 14px; font-size: 13px; line-height: 1.5; }
 .auto-amount { font: inherit; font-size: 14px; width: 130px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .auto-amount:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.bt-strategies { margin: 0 0 12px; padding: 0; flex-wrap: wrap; }
+.bt-about { font-size: 13px; }

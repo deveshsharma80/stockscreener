@@ -3,7 +3,6 @@ import { AddToTicker, OrderButtons } from './AddToTicker.jsx';
 import { SECRET_KEY, api, price, store } from './Ticker.jsx';
 import { SETUP_EVENT } from './liveFeed.js';
 import { EMA_SCAN, PARAMS, STATUS_LABEL, isFirstCandleHit, istDate } from './emasetup.js';
-import EmaBacktest from './EmaBacktest.jsx';
 
 // Signals → EMA Rejection: stocks from the "Futures April 2025" Chartink screener
 // (gap-down, red first candle; only stocks sent for the 09:15 candle) and whether the bounce got rejected at the 9 / 26 EMA on
@@ -14,19 +13,6 @@ const hhmm = (iso) => new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit
 const fmt = (v) => (v == null ? '—' : price.format(v));
 
 export default function EmaSetups({ rows }) {
-  const [view, setView] = useState('live');
-  return (
-    <>
-      <div className="seg ema-views" role="group" aria-label="View">
-        <button className={view === 'live' ? 'on' : ''} onClick={() => setView('live')}>Live</button>
-        <button className={view === 'backtest' ? 'on' : ''} onClick={() => setView('backtest')}>Backtest</button>
-      </div>
-      {view === 'live' ? <EmaLive rows={rows} /> : <EmaBacktest />}
-    </>
-  );
-}
-
-function EmaLive({ rows }) {
   const today = istDate(Date.now());
   const [day, setDay] = useState(today);
   const [data, setData] = useState(null);

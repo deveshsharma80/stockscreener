@@ -16,6 +16,7 @@ import { SETUP_EVENT } from './liveFeed.js';
 import Calculator from './Calculator.jsx';
 import Settings from './Settings.jsx';
 import AutoTrade from './AutoTrade.jsx';
+import BackTest from './BackTest.jsx';
 import BBScan from './BBScan.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
@@ -75,8 +76,8 @@ export const SECTIONS = [
     label: 'Auto Trading',
     icon: 'robot',
     tabs: [
-      ['today', 'Today', 'Paper shorts placed automatically from EMA Rejection alerts — own money, max 3 a day, full 5× split over 3'],
-      ['history', 'History', 'Automated trades by day and every order, with P&L after charges'],
+      ['trades', 'Auto Trades', 'Paper shorts placed automatically from EMA Rejection alerts — own money, max 3 a day, full 5× split over 3'],
+      ['backtest', 'Back Test', 'Test a strategy on past screener results with real Dhan candles'],
     ],
   },
   {
@@ -149,7 +150,7 @@ function readClosedGroups() {
 }
 
 // Links from earlier versions keep working
-const LEGACY = { '': 'signals/hits', hits: 'signals/hits', screener: 'signals/screener', ticker: 'market/watchlist', pnl: 'paper/overview' };
+const LEGACY = { '': 'signals/hits', hits: 'signals/hits', screener: 'signals/screener', ticker: 'market/watchlist', pnl: 'paper/overview', 'auto/today': 'auto/trades', 'auto/history': 'auto/trades' };
 
 function parseRoute() {
   const raw = window.location.hash.replace(/^#\/?/, '').split('?')[0].replace(/\/$/, '');
@@ -1086,7 +1087,7 @@ function Shell({ auth, onLogout }) {
           {section.id === 'cpos' && <CryptoPositions />}
           {section.id === 'cpaper' && <CryptoPaper tab={tab} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
-          {section.id === 'auto' && <AutoTrade tab={tab} />}
+          {section.id === 'auto' && (tab === 'backtest' ? <BackTest /> : <AutoTrade />)}
           {section.id === 'calc' && <Calculator market={tab} />}
           {section.id === 'settings' && <Settings />}
         </div>
@@ -1205,7 +1206,7 @@ function OrderToasts() {
         <div key={key} className={`toast ${o.status === 'FILLED' ? 'ok' : o.status === 'FAILED' ? 'bad' : ''}`}>
           <span>{o.status === 'FILLED' ? '✓' : o.status === 'FAILED' ? '⚠' : '⏱'} {eventText(o)}</span>
           <span className="toast-actions">
-            <a className="link" href={o.kind === 'AUTO' ? '#/auto/today' : o.status === 'FILLED' ? '#/market/positions' : '#/market/orders'} onClick={() => close(key)}>
+            <a className="link" href={o.kind === 'AUTO' ? '#/auto/trades' : o.status === 'FILLED' ? '#/market/positions' : '#/market/orders'} onClick={() => close(key)}>
               {o.kind === 'AUTO' ? 'Auto Trading' : o.status === 'FILLED' ? 'Positions' : 'Orders'}
             </a>
             <button className="link" onClick={() => close(key)} aria-label="Dismiss">×</button>

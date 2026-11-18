@@ -3,7 +3,7 @@ import { SECRET_KEY, SecretGate, api, money, price, store } from './Ticker.jsx';
 import { ORDERS_EVENT, QUOTES_EVENT } from './Orders.jsx';
 import { SETUP_EVENT, useLiveFeed } from './liveFeed.js';
 
-// NSE Market → Auto Trading: paper shorts placed automatically from EMA Rejection alerts,
+// NSE Market → Auto Trading → Auto Trades: paper shorts placed automatically from EMA Rejection alerts,
 // with their own money (separate from Paper Trading). The server does the trading
 // (lib/autotrade.js, run by the feed server every minute and on live ticks); this page shows
 // it and holds the settings.
@@ -33,7 +33,24 @@ const STATUS = {
 };
 const REASON = { stop: 'stop loss', target: '1:2 target', time: '15:15 exit', manual: 'by you' };
 
-export default function AutoTrade({ tab = 'today' }) {
+const VIEW_KEY = 'stockhits.autoView';
+
+export default function AutoTrade() {
+  const [tab, setTab] = useState(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'history' ? 'history' : 'today';
+    } catch {
+      return 'today';
+    }
+  });
+  const pickTab = (v) => {
+    setTab(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* fine */
+    }
+  };
   const [secret, setSecret] = useState(() => store.get(SECRET_KEY));
   const [unlocked, setUnlocked] = useState(false);
   const [error, setError] = useState('');
@@ -182,6 +199,11 @@ export default function AutoTrade({ tab = 'today' }) {
           {!live.live && marketOpen && ' Live prices are off right now, so checks run once a minute.'}
         </p>
       </section>
+
+      <div className="seg ema-views" role="group" aria-label="View">
+        <button className={tab === 'today' ? 'on' : ''} onClick={() => pickTab('today')}>Today</button>
+        <button className={tab === 'history' ? 'on' : ''} onClick={() => pickTab('history')}>History</button>
+      </div>
 
       {tab === 'today' ? (
         <section className="card">
