@@ -54,6 +54,7 @@ import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../
 import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, parseSeenTicks, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import { isFeedServer, notifyNse, streamToken } from '../lib/feed.js';
 import { backtestSymbol, runEmaSetups } from '../lib/emasetup.js';
+import { backtestStrategy } from '../lib/backtest.js';
 import { autoLevels, autoView, closeAuto, resetAuto, runAuto, setAutoSettings } from '../lib/autotrade.js';
 import {
   DhanError,
@@ -159,6 +160,13 @@ export default async function handler(req, res) {
         const days = (Array.isArray(body.days) ? body.days : []).map(String).slice(0, 60);
         if (!symbol || !days.length) throw new HttpError(400, 'Give a symbol and its days');
         return res.json({ ok: true, rows: await backtestSymbol(symbol, days) });
+      }
+      case 'POST backtest': {
+        // Auto Trading → Back Test: any strategy, one stock, its screener days
+        const symbol = String(body.symbol || '').trim().toUpperCase().slice(0, 40);
+        const days = (Array.isArray(body.days) ? body.days : []).map(String).slice(0, 60);
+        if (!symbol || !days.length) throw new HttpError(400, 'Give a symbol and its days');
+        return res.json({ ok: true, rows: await backtestStrategy(String(body.strategy || ''), symbol, days, body.params) });
       }
       case 'GET feed-token':
         // live prices straight from the feed server (Vultr); null → pages keep polling

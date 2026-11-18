@@ -1468,3 +1468,9 @@ tr.ema-alert td { background: color-mix(in srgb, #b91c1c 10%, transparent); }
 .auto-amount:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .bt-strategies { margin: 0 0 12px; padding: 0; flex-wrap: wrap; }
 .bt-about { font-size: 13px; }
+.ema-st.long { background: #15803d; color: #fff; }
+.bt-params { padding-top: 0; flex-wrap: wrap; gap: 10px 16px; }
+.bt-input { width: auto; padding: 4px 8px; font-size: 13px; }
+.bt-num { width: 80px; }
+.bt-cap { font: inherit; font-size: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 1px 4px; }
+tr.bt-out td { opacity: 0.45; }

@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import EmaBacktest from './EmaBacktest.jsx';
+import BbBacktest from './BbBacktest.jsx';
 
 // Auto Trading → Back Test: one place for every strategy's backtest. Add a strategy by
 // adding a row here: [id, name, one-line description, component].
 const STRATEGIES = [
   ['ema-rejection', 'EMA Rejection', 'Gap-down stocks (“Futures April 2025”) whose bounce is rejected at the 9 / 26 EMA on 5-minute candles — short.', EmaBacktest],
+  ['bb-breakout', 'Bollinger Breakout', 'First 5-minute candle green and above the upper Bollinger Band, then a candle breaks its high — long.', BbBacktest],
 ];
 const KEY = 'stockhits.backtestStrategy';
 
@@ -37,7 +39,7 @@ export default function BackTest() {
         </div>
         <span className="muted-cell bt-about"><b>{name}:</b> {about}</span>
       </div>
-      <View />
+      <View key={id} />
     </>
   );
 }
