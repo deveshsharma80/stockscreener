@@ -1,3 +1,4 @@
+import { dhanCharges } from './charges.js';
 import { useEffect, useRef, useState } from 'react';
 import { PRODUCT_LABEL, describe, kindOf, price, productFor } from './Ticker.jsx';
 
@@ -21,7 +22,7 @@ const clamp = (p, el) => {
   return { x: Math.min(Math.max(8, p.x), window.innerWidth - w - 8), y: Math.min(Math.max(8, p.y), window.innerHeight - Math.min(h, 120)) };
 };
 
-export default function QuickTrade({ row, quote, position, account, products, onPlace, onOrder, onClose }) {
+export default function QuickTrade({ row, quote, position, account, products, chargeModel = 'dhan', onPlace, onOrder, onClose }) {
   const box = useRef(null);
   const drag = useRef(null);
   const [pos, setPos] = useState(readPos);
@@ -48,6 +49,8 @@ export default function QuickTrade({ row, quote, position, account, products, on
   const cond = trigOk && live > 0 ? (trig > live ? 'above' : trig < live ? 'below' : null) : null;
   const lev = products?.[product]?.leverage ?? (product === 'EQ_INTRADAY' ? 4 : 1);
   const pct = products?.[product]?.brokeragePct ?? (product === 'EQ_INTRADAY' ? 0.025 : 1);
+  // charges for an order of this value: Dhan's real charges (or the old flat %)
+  const fee = (val) => (val == null ? null : chargeModel === 'flat' ? (val * pct) / 100 : dhanCharges({ side, value: val, segment: row.segment, product }));
   const optBuy = product === 'IDX_OPT_BUY' || product === 'STK_OPT_BUY';
 
   // Funds (the server checks again at the fill price)
@@ -56,7 +59,7 @@ export default function QuickTrade({ row, quote, position, account, products, on
   const closing = held && Math.sign(held) !== Math.sign(signedQty) ? Math.min(qty, Math.abs(held)) : 0;
   const opening = qty - closing;
   const value = ltp != null ? ltp * qty : null;
-  const need = ltp != null ? (opening * ltp) / lev + (qty * ltp * pct) / 100 : null;
+  const need = ltp != null ? (opening * ltp) / lev + fee(qty * ltp) : null;
   const pot = account?.buckets?.[product];
   const avail = pot ? pot.available : account?.available;
   const released = closing && ltp != null && position ? closing * Math.abs(position.avg) / lev + closing * (ltp - position.avg) * Math.sign(held) : 0;
@@ -64,7 +67,8 @@ export default function QuickTrade({ row, quote, position, account, products, on
 
   // Money per share / lot when opening: margin (value ÷ leverage) + brokerage
   const mult = fno ? lot : 1;
-  const unitCost = ltp != null ? (ltp * mult) / lev + (ltp * mult * pct) / 100 : null;
+  // per share / lot: margin + charges at the rate of a ₹1 L order (Dhan's ₹20 is per order, not per unit)
+  const unitCost = ltp != null ? (ltp * mult) / lev + (ltp * mult * fee(100000)) / 100000 : null;
   const unitsFor = (p) => (unitCost && avail > 0 ? Math.floor(((avail * p) / 100) / unitCost) : 0);
   const usedPct = need != null && avail > 0 ? Math.min(100, (need / avail) * 100) : 0;
   const sliderPct = deploy ?? Math.round(usedPct);
@@ -145,7 +149,7 @@ export default function QuickTrade({ row, quote, position, account, products, on
     setStatus({ kind: 'busy', text: 'Placing…' });
     try {
       const t = await onPlace(side, qty, product);
-      setStatus({ kind: 'ok', text: `${t.side === 'BUY' ? 'Bought' : 'Sold'} ${t.qty.toLocaleString('en-IN')} @ ${price.format(t.price)} · brokerage ₹${price.format(t.charges)}` });
+      setStatus({ kind: 'ok', text: `${t.side === 'BUY' ? 'Bought' : 'Sold'} ${t.qty.toLocaleString('en-IN')} @ ${price.format(t.price)} · charges ₹${price.format(t.charges)}${t.defaultStop ? ` · stop loss ₹${price.format(t.defaultStop)} added` : ''}` });
     } catch (err) {
       setStatus({ kind: 'err', text: err.message });
     }
@@ -274,7 +278,7 @@ export default function QuickTrade({ row, quote, position, account, products, on
           <dl className="qt-facts">
             <div><dt>Value</dt><dd className="mono">₹{price.format(value)}</dd></div>
             <div><dt>{lev > 1 ? 'Margin' : 'Needs'}</dt><dd className="mono">₹{price.format(opening ? (opening * ltp) / lev : 0)}</dd></div>
-            <div><dt>Brokerage</dt><dd className="mono">₹{price.format((value * pct) / 100)}</dd></div>
+            <div><dt>Charges</dt><dd className="mono">₹{price.format(fee(value) ?? 0)}</dd></div>
             <div><dt>Available</dt><dd className={`mono ${short ? 'neg' : ''}`}>{avail != null ? `₹${price.format(avail)}` : '…'}</dd></div>
           </dl>
         )}

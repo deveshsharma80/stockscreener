@@ -1474,3 +1474,5 @@ tr.ema-alert td { background: color-mix(in srgb, #b91c1c 10%, transparent); }
 .bt-num { width: 80px; }
 .bt-cap { font: inherit; font-size: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 1px 4px; }
 tr.bt-out td { opacity: 0.45; }
+.set-pct { width: 80px; text-align: right; }
+.set-card + .set-card { margin-top: 16px; }

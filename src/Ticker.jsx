@@ -567,6 +567,7 @@ export default function Ticker({ subview = 'watchlist', actionsEl = null }) {
           position={positions.find((p) => p.key === tradeKey && p.qty !== 0) || null}
           account={book?.account}
           products={book?.products}
+          chargeModel={book?.chargeModel}
           onPlace={(side, qty, product) => placeTrade(tradeKey, side, qty, product)}
           onOrder={(o) => placeOrderAt(tradeKey, o)}
           onClose={() => setTradeKey(null)}
@@ -767,7 +768,7 @@ function PositionsCard({ book, quotes, onExit, exits, onChart }) {
   const chargesToday = book?.totals?.chargesToday ?? 0;
   const dayTotal = openSum + bookedToday - chargesToday;
   const rate = (k, fallback) => book?.products?.[k]?.brokeragePct ?? fallback;
-  const pctText = `Equity Intraday ${rate('EQ_INTRADAY', 0.025)}%, Index and Equity Options Buying ${rate('IDX_OPT_BUY', 1)}% of trade value`;
+  const pctText = book?.chargeModel === 'flat' ? `Equity Intraday ${rate('EQ_INTRADAY', 0.025)}%, Index and Equity Options Buying ${rate('IDX_OPT_BUY', 1)}% of trade value` : 'Dhan’s real charges (brokerage, STT, exchange, SEBI, stamp duty, GST)';
   const tone = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
 
   const exit = async (p) => {
@@ -775,7 +776,7 @@ function PositionsCard({ book, quotes, onExit, exits, onChart }) {
     setMsg(null);
     try {
       const t = await onExit(p);
-      setMsg({ kind: 'ok', text: `Exited ${describe(p)}: ${t.side === 'BUY' ? 'bought' : 'sold'} ${t.qty} @ ${price.format(t.price)} · brokerage ₹${price.format(t.charges)}` });
+      setMsg({ kind: 'ok', text: `Exited ${describe(p)}: ${t.side === 'BUY' ? 'bought' : 'sold'} ${t.qty} @ ${price.format(t.price)} · charges ₹${price.format(t.charges)}` });
     } catch (e) {
       setMsg({ kind: 'err', text: e.message });
     } finally {

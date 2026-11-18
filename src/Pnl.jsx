@@ -1,3 +1,4 @@
+import { CHARGES_TEXT } from './charges.js';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { PRODUCT_LABEL, PRODUCT_SHORT, SECRET_KEY, SecretGate, api, describe, fmtExpiry, kindOf, money, price, segLabel, signed, store } from './Ticker.jsx';
 import { BOOK_EVENT, ORDERS_EVENT, QUOTES_EVENT } from './Orders.jsx';
@@ -381,7 +382,7 @@ export default function Pnl({ subview = 'overview' }) {
           onPickDay={view === 'daily' ? (d) => (setDayFilter(d), setShown(PAGE), (window.location.hash = '#/paper/trades')) : null}
         />
         <div className="foot">
-          Booked P&amp;L by {view === 'daily' ? 'trading day' : 'week, Monday to Sunday'}, Indian time. Net = gross − brokerage (per buy and per sell: Index and Equity Options Buying {book.products?.IDX_OPT_BUY?.brokeragePct ?? 1}%, Equity Intraday {book.products?.EQ_INTRADAY?.brokeragePct ?? 0.025}% of trade value). Bars and cumulative use net.
+          Booked P&amp;L by {view === 'daily' ? 'trading day' : 'week, Monday to Sunday'}, Indian time. Net = gross − charges ({book.chargeModel === 'flat' ? <>per buy and per sell: Index and Equity Options Buying {book.products?.IDX_OPT_BUY?.brokeragePct ?? 1}%, Equity Intraday {book.products?.EQ_INTRADAY?.brokeragePct ?? 0.025}% of trade value</> : CHARGES_TEXT}). Bars and cumulative use net.
           {open.length > 0 && ' Open positions are shown separately for the current period.'}
         </div>
       </section>

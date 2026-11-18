@@ -483,7 +483,7 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
                 setExitState({ kind: 'busy', text: 'Exiting…' });
                 try {
                   const t = await onExit(position);
-                  setExitState({ kind: 'ok', text: `Exited: ${t.side === 'BUY' ? 'bought' : 'sold'} ${t.qty} @ ${price.format(t.price)} · brokerage ₹${price.format(t.charges)}` });
+                  setExitState({ kind: 'ok', text: `Exited: ${t.side === 'BUY' ? 'bought' : 'sold'} ${t.qty} @ ${price.format(t.price)} · charges ₹${price.format(t.charges)}` });
                 } catch (e) {
                   setExitState({ kind: 'err', text: e.message });
                 }

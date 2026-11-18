@@ -37,6 +37,8 @@
 // POST {action:"journal-note", id, note}              save a note ("" deletes it)
 // POST {action:"journal-delete", ids:[tradeId…]}      delete closed trades (their fills and notes)
 // POST {action:"paper-reset-bucket", product, amount} reset one trade type's money (keeps history)
+// GET  ?action=paper-stops / POST {action:"paper-stops", enabled?, EQ_INTRADAY?, IDX_OPT_BUY?, STK_OPT_BUY?}
+//      default stop loss (% from entry) added to every new paper position
 //
 // Automated trading (EMA Rejection shorts, own money — lib/autotrade.js):
 // GET  ?action=auto                                    account, rules, trades, P&L
@@ -49,7 +51,7 @@
 // Runs with the price polls and ?action=check-orders (cron-job.org), so it works with every tab closed.
 import { readTable, updateTable } from '../lib/db.js';
 import { HttpError, checkSecret, cors, parseBody, sendError } from '../lib/http.js';
-import { PRODUCTS, addTrade, inSquareOffWindow, squareOffLabel, checkFunds, computeBook, deleteTrades, productFor, readAccount, readTrades, resetAccount, resetBucket, setCapital, validateOrder } from '../lib/paper.js';
+import { CHARGE_MODEL, PRODUCTS, addTrade, defaultStopFor, readStops, setStops, inSquareOffWindow, squareOffLabel, checkFunds, computeBook, deleteTrades, productFor, readAccount, readTrades, resetAccount, resetBucket, setCapital, validateOrder } from '../lib/paper.js';
 import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../lib/journal.js';
 import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, parseSeenTicks, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import { isFeedServer, notifyNse, streamToken } from '../lib/feed.js';
@@ -259,6 +261,10 @@ export default async function handler(req, res) {
         if (gone?.length) await notifyNse('exits removed');
         return res.json({ ok: true, trade, ...book });
       }
+      case 'GET paper-stops':
+        return res.json({ ok: true, stops: await readStops() });
+      case 'POST paper-stops':
+        return res.json({ ok: true, stops: await setStops(body) });
       case 'POST paper-capital':
         await setCapital(body.amount);
         return res.json({ ok: true, ...(await paperBook()) });
@@ -419,7 +425,28 @@ async function placePaperTrade({ key, side, qty, product, orderId, atPrice = nul
     const what = funds.leverage > 1 ? `margin at ${funds.leverage}× + brokerage` : 'value + brokerage';
     throw new HttpError(400, `Not enough paper funds in your ${PRODUCTS[product].label} money: this order needs ₹${f(funds.required)} (${what}), available ₹${f(funds.available)}.`, { kind: 'funds' });
   }
-  return addTrade({ inst, side, qty, price: quote.ltp, marketOpen: marketStatus().open, product, orderId });
+  const trade = await addTrade({ inst, side, qty, price: quote.ltp, marketOpen: marketStatus().open, product, orderId });
+  // A new position gets the default stop loss for its trade type (never fails the trade)
+  if (!closesOnly) {
+    const sl = await applyDefaultStop(key).catch((e) => console.warn('default stop:', e.message));
+    if (sl) trade.defaultStop = sl;
+  }
+  return trade;
+}
+
+/** Add the default stop loss to the position on `key` if it has none yet. Returns the level. */
+async function applyDefaultStop(key) {
+  const stops = await readStops();
+  if (!stops.enabled) return null;
+  const pos = (await paperBook()).positions.find((p) => p.key === key && p.qty !== 0);
+  if (!pos) return null;
+  const has = (await readOrders({ fresh: true })).some((o) => o.key === key && o.kind === 'SL' && o.status === 'PENDING');
+  if (has) return null; // adding to a position keeps its stop where it is
+  const level = defaultStopFor(stops, pos);
+  if (level == null) return null;
+  await setExit({ inst: pos, kind: 'SL', price: level, pos });
+  await notifyNse('default stop');
+  return level;
 }
 
 async function paperBook() {
@@ -617,6 +644,7 @@ async function resolveForOrder(params) {
     account: book.account,
     pot: book.account.buckets?.[ORDER_PRODUCT] || null, // trigger orders use the Equity Intraday money
     product: { id: ORDER_PRODUCT, ...PRODUCTS[ORDER_PRODUCT] },
+    chargeModel: CHARGE_MODEL,
     validUntil: sessionEnd(),
     market: marketStatus(),
     ignoreHours: ignoreHours(),

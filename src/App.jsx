@@ -130,7 +130,7 @@ export const SECTIONS = [
     id: 'settings',
     label: 'Settings',
     icon: 'settings',
-    tabs: [['app', 'App settings', 'Price refresh and other app-wide settings (saved on this device)']],
+    tabs: [['app', 'App settings', 'Price refresh (saved on this device) and paper trading stops & charges (saved on the server)']],
   },
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.
