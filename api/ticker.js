@@ -172,7 +172,9 @@ export default async function handler(req, res) {
         const symbol = String(body.symbol || '').trim().toUpperCase().slice(0, 40);
         const days = (Array.isArray(body.days) ? body.days : []).map(String).slice(0, 60);
         if (!symbol || !days.length) throw new HttpError(400, 'Give a symbol and its days');
-        return res.json({ ok: true, rows: await backtestStrategy(String(body.strategy || ''), symbol, days, body.params) });
+        const times = {};
+        for (const [d, t] of Object.entries(body.times && typeof body.times === 'object' ? body.times : {})) if (/^\d{4}-\d{2}-\d{2}$/.test(d) && /^\d{2}:\d{2}$/.test(String(t))) times[d] = String(t);
+        return res.json({ ok: true, rows: await backtestStrategy(String(body.strategy || ''), symbol, days, body.params, times) });
       }
       case 'GET scanners':
         return res.json({ ok: true, scanners: await readScanners() });

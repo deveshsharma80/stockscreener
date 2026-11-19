@@ -91,22 +91,27 @@ function readList(text, firstOnly) {
     const k = `${w.day}|${symbol}`;
     if (seen.has(k)) continue;
     seen.add(k);
-    out.push({ day: w.day, symbol });
+    out.push({ day: w.day, symbol, time: w.time }); // first hit of the day for the stock
   }
   return { list: out, skipped };
 }
 
 function jobsOf(list) {
   const by = new Map();
-  for (const { day, symbol } of list) by.set(symbol, [...(by.get(symbol) || []), day]);
+  const timeOf = new Map(); // "day|symbol" → hit time from the CSV (strategies that enter at the hit use it)
+  for (const { day, symbol, time } of list) {
+    by.set(symbol, [...(by.get(symbol) || []), day]);
+    if (time) timeOf.set(`${day}|${symbol}`, time);
+  }
   const jobs = [];
+  const job = (symbol, days) => ({ symbol, days, times: Object.fromEntries(days.filter((d) => timeOf.has(`${d}|${symbol}`)).map((d) => [d, timeOf.get(`${d}|${symbol}`)])) });
   for (const [symbol, days] of by) {
     let chunk = [];
     for (const d of [...days].sort()) {
-      if (chunk.length && (Date.parse(d) - Date.parse(chunk[0])) / 86_400_000 > 80) jobs.push({ symbol, days: chunk }), (chunk = []);
+      if (chunk.length && (Date.parse(d) - Date.parse(chunk[0])) / 86_400_000 > 80) jobs.push(job(symbol, chunk)), (chunk = []);
       chunk.push(d);
     }
-    if (chunk.length) jobs.push({ symbol, days: chunk });
+    if (chunk.length) jobs.push(job(symbol, chunk));
   }
   return jobs;
 }
@@ -140,7 +145,7 @@ export default function StrategyBacktest({ config }) {
     }));
     return { ...defaults, ...ok };
   });
-  const [firstOnly, setFirstOnly] = useState(true);
+  const [firstOnly, setFirstOnly] = useState(C.firstOnly ?? true);
   const [file, setFile] = useState(saved?.file || '');
   const [list, setList] = useState(saved?.list || []);
   const [results, setResults] = useState(saved?.rows || []);
@@ -170,7 +175,7 @@ export default function StrategyBacktest({ config }) {
     const scan = scans.find((x) => x.id === scanId);
     if (!scan) return setErr('Pick a scan (make one under NSE Market → Scanners).');
     setErr('');
-    setProgress({ done: 0, total: 0, note: `Scanning ${hist?.stocks ?? ''} stocks and testing on the server — about 30–60 s for a year` });
+    setProgress({ done: 0, total: 0, note: `Scanning ${hist?.stocks ?? ''} stocks and testing on the server — 1–5 min for a year (longer when the scan matches on most days)` });
     setResults([]);
     setUsedParams(p);
     try {
