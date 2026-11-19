@@ -92,7 +92,10 @@ export default function EmaSetups({ rows }) {
         <div className="filters">
           <label className="ema-day">
             <span>Day</span>
-            <select className="select" value={day} onChange={(e) => setDay(e.target.value)}>
+            {/* any day in the last 45 (the server keeps that long); quick picks for days with hits */}
+            <input className="select" type="date" value={day} max={today} min={istDate(Date.now() - 45 * 86_400_000)} onChange={(e) => e.target.value && setDay(e.target.value)} />
+            <select className="select" value="" onChange={(e) => e.target.value && setDay(e.target.value)} title="Recent days with hits">
+              <option value="">recent…</option>
               {days.map((d) => <option key={d} value={d}>{d === today ? `Today (${d})` : d}</option>)}
             </select>
           </label>
