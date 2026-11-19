@@ -14,10 +14,11 @@ export const HALF_BACKTEST = {
   firstOnly: false,
   csvOnly: true, // the stocks come from a Chartink daily scan
   intro:
-    'Upload a Chartink backtest CSV of your daily scan (Date, Symbol …): each row is a big green day. The backtest watches the following days for the fall to the middle of that candle’s body and shorts there — or buys there with Side “Long” — no stop loss. Candles from Dhan.',
+    'Upload a Chartink backtest CSV of your daily scan (Date, Symbol …): each row is a big green day. The backtest watches the following days for the fall to the middle of that candle’s body and shorts there — or buys there with Side “Long” — no stop loss unless you set one. Candles from Dhan.',
   params: [
     { key: 'side', label: 'At the middle', type: 'select', def: D.side, options: [['short', 'Short (sell)'], ['long', 'Long (buy)']] },
     { key: 'bigPct', label: 'Big candle body ≥ %', type: 'number', step: 1, def: D.bigPct },
+    { key: 'stopPct', label: 'Stop loss % (0 = none)', type: 'number', step: 0.5, def: D.stopPct },
     { key: 'waitDays', label: 'Wait up to (trading days)', type: 'number', step: 1, def: D.waitDays },
     { key: 'lastEntry', label: 'No entry after', type: 'select', def: D.lastEntry, options: TIMES },
   ],
@@ -42,8 +43,8 @@ export const HALF_BACKTEST = {
     { head: 'Worst against', num: true, cell: (r) => (r.worstPct != null ? <span className="neg">{r.worstPct}%</span> : '—') },
   ],
   csv: {
-    head: ['Side', 'Big open', 'Big close', 'Body %', 'Middle', 'Eaten on', 'Days after', 'Opened below middle', 'Entry', 'Worst against % (same day)', 'Worst against % (next day)'],
-    row: (r) => [r.side || '', r.bigOpen ?? '', r.bigClose ?? '', r.bodyPct ?? '', r.mid ?? '', r.triggerDay || '', r.daysAfter ?? '', r.gapBelow ? 'yes' : '', r.entry ?? '', r.worstPct ?? '', r.nextWorstPct ?? ''],
+    head: ['Side', 'Stop', 'Big open', 'Big close', 'Body %', 'Middle', 'Eaten on', 'Days after', 'Opened below middle', 'Entry', 'Worst against % (same day)', 'Worst against % (next day)'],
+    row: (r) => [r.side || '', r.sl ?? '', r.bigOpen ?? '', r.bigClose ?? '', r.bodyPct ?? '', r.mid ?? '', r.triggerDay || '', r.daysAfter ?? '', r.gapBelow ? 'yes' : '', r.entry ?? '', r.worstPct ?? '', r.nextWorstPct ?? ''],
   },
 };
 
