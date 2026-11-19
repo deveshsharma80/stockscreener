@@ -308,12 +308,20 @@ export const TEMPLATES = [
     ],
   },
   {
-    name: 'Gap-down red first candle (5 min)',
+    // the Chartink screener "Futures April 2025" (feeds EMA Rejection); greyed-out conditions are off
+    name: 'Futures April 2025 (EMA Rejection)',
     tf: 5,
     at: 'first',
     conditions: [
-      { left: { a: P('open'), op: '/', b: P('close', 5, 1) }, cmp: '<', right: { a: N(0.99) } },
-      { left: { a: P('close') }, cmp: '<', right: { a: P('open') } },
+      { left: { a: P('open') }, cmp: '<', right: { a: { t: 'ind', ind: 'bbl', n: 30, k: 2, tf: 5, off: 0 }, op: '*', b: N(1.005) } },
+      { left: { a: P('close') }, cmp: '>', right: { a: N(300) } },
+      { left: { a: P('volume') }, cmp: '>', right: { a: N(200000) } },
+      { left: { a: P('close', 2) }, cmp: '>', right: { a: { t: 'ind', ind: 'bbu', n: 20, k: 2, tf: 2, off: 0 } }, off: true },
+      { left: { a: P('close', 2), op: '/', b: P('open', 2) }, cmp: '<', right: { a: N(1.002) }, off: true },
+      { left: { a: P('close', 2), op: '/', b: P('open', 2) }, cmp: '>', right: { a: N(1.0001) }, off: true },
+      { left: { a: P('close') }, cmp: '>', right: { a: { t: 'ind', ind: 'ema', n: 20, tf: 5, off: 0 } }, off: true },
+      { left: { a: { t: 'ind', ind: 'rsi', n: 14, tf: 5, off: 0 } }, cmp: '<', right: { a: N(40) } },
+      { left: { a: P('close') }, cmp: '<', right: { a: N(999) } },
     ],
   },
 ];
