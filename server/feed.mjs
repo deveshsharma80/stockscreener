@@ -82,7 +82,7 @@ const summaries = {
   'crypto-scan': (j) => j && `checked ${j.checked ?? '?'} pairs, ≥${j.minPct}% today: ${(j.matches || []).map((m) => m.symbol).join(' ') || 'none'}, newly added ${j.added?.length ?? 0}`,
   'bb-scan': (j) => j && `checked ${j.checked}/${j.total}, hits ${j.hits}, latest candle ${(j.latestHits || []).map((h) => h.symbol).join(' ') || 'none'}`,
   'ema-setups': (j) =>
-    j && `${j.checked} stocks · ${(j.setups || []).map((x) => `${x.symbol} ${x.status}`).join(', ') || 'none from the screener today'}${j.newAlerts?.length ? ` · NEW ALERT ${j.newAlerts.map((a) => a.symbol).join(' ')}` : ''}`,
+    j && `${j.checked} stocks${j.deferred ? ` (+${j.deferred} next run)` : ''} · ${(j.setups || []).map((x) => `${x.symbol} ${x.status}`).join(', ') || 'none from the screener today'}${j.newAlerts?.length ? ` · NEW ALERT ${j.newAlerts.map((a) => a.symbol).join(' ')}` : ''}`,
   'cp-check': (j) =>
     j &&
     `positions ${j.checked ?? 0}, orders filled ${j.ordersFilled?.length ?? 0}, failed ${j.ordersFailed?.length ?? 0}, SL/TP ${j.exited?.length ?? 0}, liquidated ${j.liquidated?.length ?? 0}`,
@@ -121,6 +121,7 @@ async function runJob(name, why = 'schedule') {
     return { ok: true, text: 'already running — will run again right after' };
   }
   st.running = true;
+  st.startedAt = Date.now();
   let path = job.path;
   let sent = [];
   if (name === 'cp-check') {
@@ -718,7 +719,7 @@ function status() {
     jobs: Object.fromEntries(
       Object.entries(JOBS).map(([k, j]) => [
         k,
-        { schedule: j.note, runs: runs[k].count, fails: runs[k].fails, last: runs[k].last && { ...runs[k].last, at: `${istParts(new Date(runs[k].last.at)).text} IST` } },
+        { schedule: j.note, runs: runs[k].count, fails: runs[k].fails, running: runs[k].running ? `for ${ago(runs[k].startedAt)} s` : false, last: runs[k].last && { ...runs[k].last, at: `${istParts(new Date(runs[k].last.at)).text} IST` } },
       ])
     ),
     recentHits: events.map((e) => ({ at: `${istParts(new Date(e.at)).text} IST`, price: e.price, hits: e.hits })),
