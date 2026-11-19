@@ -17,6 +17,7 @@ import Calculator from './Calculator.jsx';
 import Settings from './Settings.jsx';
 import AutoTrade from './AutoTrade.jsx';
 import BackTest from './BackTest.jsx';
+import Scanners from './Scanners.jsx';
 import BBScan from './BBScan.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
@@ -70,6 +71,12 @@ export const SECTIONS = [
       ['charts', 'Charts', 'P&L lines by trade type, daily bars, win rate, brokerage and instruments'],
       ['trades', 'Fills', 'Every Buy / Sell fill, with brokerage and P&L'],
     ],
+  },
+  {
+    id: 'scanners',
+    label: 'Scanners',
+    icon: 'scan',
+    tabs: [['scans', 'My scans', 'Build your own scans (EMA, Bollinger, RSI… on 1, 2, 3, 5, 15-minute candles) and test them on a year of history']],
   },
   {
     id: 'auto',
@@ -135,7 +142,7 @@ export const SECTIONS = [
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.
 export const GROUPS = [
-  { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper', 'auto'] },
+  { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'scanners', 'market', 'trades', 'paper', 'auto'] },
   { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'cpos', 'cpaper', 'movers', 'candles'] },
   { id: 'tools', label: 'Tools', short: '⚒', sections: ['calc', 'settings'] },
 ];
@@ -1088,6 +1095,7 @@ function Shell({ auth, onLogout }) {
           {section.id === 'cpaper' && <CryptoPaper tab={tab} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
           {section.id === 'auto' && (tab === 'backtest' ? <BackTest /> : <AutoTrade />)}
+          {section.id === 'scanners' && <Scanners />}
           {section.id === 'calc' && <Calculator market={tab} />}
           {section.id === 'settings' && <Settings />}
         </div>
@@ -1234,6 +1242,13 @@ function Icon({ name }) {
           <rect x="4" y="6" width="4" height="9" rx="1" />
           <rect x="10" y="7" width="4" height="7" rx="1" />
           <rect x="16" y="9" width="4" height="7" rx="1" />
+        </svg>
+      );
+    case 'scan':
+      return (
+        <svg {...p}>
+          <circle cx="10.5" cy="10.5" r="6.5" />
+          <path d="M20 20l-4.8-4.8M7.5 12l2-2.5 2 1.5 2-3" />
         </svg>
       );
     case 'robot':

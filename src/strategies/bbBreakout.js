@@ -61,10 +61,11 @@ export function runBbBreakout({ c5, c1Day, day, params = {} }) {
     gapPct: prev ? r2(((f.open - prev.close) / prev.close) * 100) : null,
     firstPct: r2(((f.close - f.open) / f.open) * 100),
   };
-  if (!bb) return { ...base, status: 'waiting', note: `fewer than ${P.bbPeriod} candles before 09:15` };
-  if (!(f.close > f.open)) return { ...base, status: 'not-green', note: 'first candle is not green' };
+  // skipSetup: a scanner already picked this stock (Back Test → Scanner source)
+  if (!P.skipSetup && !bb) return { ...base, status: 'waiting', note: `fewer than ${P.bbPeriod} candles before 09:15` };
+  if (!P.skipSetup && !(f.close > f.open)) return { ...base, status: 'not-green', note: 'first candle is not green' };
   const level = P.above === 'low' ? f.low : P.above === 'open' ? f.open : f.close;
-  if (!(level > bb.upper)) return { ...base, status: 'not-above', note: `${P.above === 'low' ? 'low' : P.above === 'open' ? 'open' : 'close'} ${r2(level)} not above the upper band ${r2(bb.upper)}` };
+  if (!P.skipSetup && !(level > bb.upper)) return { ...base, status: 'not-above', note: `${P.above === 'low' ? 'low' : P.above === 'open' ? 'open' : 'close'} ${r2(level)} not above the upper band ${r2(bb.upper)}` };
 
   // entry: first 1-minute candle after the first 5 minutes that reaches the level
   const mins = c1Day.filter((c) => c.time >= f.time + FIVE && istHHMM(c.time) < P.exitBy);

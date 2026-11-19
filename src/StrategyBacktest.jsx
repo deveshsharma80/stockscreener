@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { SECRET_KEY, api, store } from './Ticker.jsx';
+import { historyCall } from './historyApi.js';
 
 // Auto Trading → Back Test, shared by every strategy. Upload a Chartink backtest export
 // (Date, Symbol, …); for each stock the server fetches 1-minute candles from Dhan once and
@@ -148,6 +149,42 @@ export default function StrategyBacktest({ config }) {
   const [err, setErr] = useState('');
   const [onlyTrades, setOnlyTrades] = useState(false);
   const [cap, setCap] = useState(saved?.cap ?? 3);
+  // where the stock-days come from: a Chartink CSV, or one of your Scanners on the server history
+  const [source, setSource] = useState(saved?.source || 'csv');
+  const [scans, setScans] = useState([]);
+  const [scanId, setScanId] = useState(saved?.scanId || '');
+  const [range, setRange] = useState(saved?.range || { from: '', to: '', minTurn: 0 });
+  const [hist, setHist] = useState(null);
+  useEffect(() => {
+    if (source !== 'scanner' || !secret) return;
+    api(secret, 'scanners').then((j) => {
+      setScans(j.scanners);
+      setScanId((cur) => (j.scanners.some((x) => x.id === cur) ? cur : j.scanners[0]?.id || ''));
+    }).catch((e) => setErr(e.message));
+    historyCall(secret, 'info').then((j) => {
+      setHist(j);
+      setRange((r) => (r.from && r.to ? r : { ...r, from: j.from, to: j.to }));
+    }).catch((e) => setErr(e.message));
+  }, [source, secret]);
+  const runScanner = async (p = params) => {
+    const scan = scans.find((x) => x.id === scanId);
+    if (!scan) return setErr('Pick a scan (make one under NSE Market → Scanners).');
+    setErr('');
+    setProgress({ done: 0, total: 0, note: `Scanning ${hist?.stocks ?? ''} stocks and testing on the server — about 30–60 s for a year` });
+    setResults([]);
+    setUsedParams(p);
+    try {
+      const j = await historyCall(secret, 'backtest', { scan, from: range.from, to: range.to, minTurnoverCr: Number(range.minTurn) || 0, strategy: C.id, params: p });
+      const label = `Scan “${scan.name}” · ${range.from} → ${range.to}${Number(range.minTurn) ? ` · turnover ≥ ₹${range.minTurn} Cr` : ''} · ${j.stocks} stocks · ${j.rows.length} stock-days found (${(j.ms / 1000).toFixed(0)} s)`;
+      setFile(label);
+      setResults(j.rows);
+      save(SAVE, { file: label, list: [], rows: j.rows, params: p, usedParams: p, cap, source: 'scanner', scanId, range });
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setProgress(null);
+    }
+  };
   const stopRef = useRef(false);
 
   const runList = async (items, label, keep, p = params) => {
@@ -183,7 +220,7 @@ export default function StrategyBacktest({ config }) {
       if (queue.length) await sleep(GAP_MS);
     }
     setProgress(null);
-    save(SAVE, { file: label, list: items, rows, params: p, usedParams: p, cap });
+    save(SAVE, { file: label, list: items, rows, params: p, usedParams: p, cap, source: 'csv' });
   };
 
   const upload = async (f) => {
@@ -275,26 +312,47 @@ export default function StrategyBacktest({ config }) {
   return (
     <>
       <section className="card">
+        <div className="filters bt-source">
+          <span className="muted-cell">Stocks from</span>
+          <div className="seg" role="group" aria-label="Source">
+            <button className={source === 'csv' ? 'on' : ''} disabled={!!progress} onClick={() => setSource('csv')}>Chartink CSV</button>
+            <button className={source === 'scanner' ? 'on' : ''} disabled={!!progress} onClick={() => setSource('scanner')}>My scanner (server history)</button>
+          </div>
+        </div>
         <div className="filters">
-          {secret ? (
-            <label className="btn">
-              {progress ? 'Running…' : 'Upload Chartink backtest CSV'}
-              <input type="file" accept=".csv,text/csv" hidden disabled={!!progress} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
-            </label>
-          ) : (
+          {!secret ? (
             <span className="status err">Sign in with your secret on the Market page to run a backtest.</span>
-          )}
-          <label className="ema-day">
-            <input type="checkbox" checked={firstOnly} onChange={(e) => setFirstOnly(e.target.checked)} disabled={!!progress} />
-            <span>Only stocks at the first candle (09:15)</span>
-          </label>
-          {progress && (
+          ) : source === 'csv' ? (
             <>
-              <span className="muted-cell">{progress.done} / {progress.total} stocks{progress.note ? ` · ${progress.note}` : ''}</span>
-              <button className="btn" onClick={() => (stopRef.current = true)}>Stop</button>
+              <label className="btn">
+                {progress ? 'Running…' : 'Upload Chartink backtest CSV'}
+                <input type="file" accept=".csv,text/csv" hidden disabled={!!progress} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
+              </label>
+              <label className="ema-day">
+                <input type="checkbox" checked={firstOnly} onChange={(e) => setFirstOnly(e.target.checked)} disabled={!!progress} />
+                <span>Only stocks at the first candle (09:15)</span>
+              </label>
+            </>
+          ) : (
+            <>
+              <select className="auto-amount bt-input" value={scanId} disabled={!!progress} onChange={(e) => setScanId(e.target.value)}>
+                {!scans.length && <option value="">No scans yet — make one in Scanners</option>}
+                {scans.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+              <label className="ema-day"><span>From</span><input className="auto-amount bt-input" type="date" value={range.from} min={hist?.from} max={range.to} disabled={!!progress} onChange={(e) => setRange({ ...range, from: e.target.value })} /></label>
+              <label className="ema-day"><span>To</span><input className="auto-amount bt-input" type="date" value={range.to} min={range.from} max={hist?.to} disabled={!!progress} onChange={(e) => setRange({ ...range, to: e.target.value })} /></label>
+              <label className="ema-day" title="Average daily traded value, last 20 sessions"><span>Min turnover ₹ Cr</span><input className="auto-amount bt-input bt-num" type="number" min="0" value={range.minTurn} disabled={!!progress} onChange={(e) => setRange({ ...range, minTurn: e.target.value })} /></label>
+              <button className="btn primary" disabled={!!progress || !scanId || !range.from || !range.to} onClick={() => runScanner()}>{progress ? 'Running…' : 'Run backtest'}</button>
             </>
           )}
-          {!progress && !!list.length && secret && changed && <button className="btn primary" onClick={() => runList(list, file, [])}>Run again with these settings</button>}
+          {progress && (
+            <>
+              <span className="muted-cell">{progress.total ? `${progress.done} / ${progress.total} stocks` : ''}{progress.note ? `${progress.total ? ' · ' : ''}${progress.note}` : ''}</span>
+              {progress.total > 0 && <button className="btn" onClick={() => (stopRef.current = true)}>Stop</button>}
+            </>
+          )}
+          {!progress && secret && changed && source === 'csv' && !!list.length && <button className="btn primary" onClick={() => runList(list, file, [])}>Run again with these settings</button>}
+          {!progress && secret && changed && source === 'scanner' && !!results.length && <button className="btn primary" onClick={() => runScanner()}>Run again with these settings</button>}
           {!!failed.length && !progress && secret && <button className="btn" onClick={retryFailed}>Retry {failed.length} failed</button>}
           {!!results.length && !progress && <button className="btn push" onClick={download}>Download CSV</button>}
         </div>
@@ -315,7 +373,7 @@ export default function StrategyBacktest({ config }) {
             <button className="link" disabled={!!progress} onClick={() => setParams(defaults)}>Defaults</button>
           </div>
         )}
-        <p className="muted-cell ema-bt-file">{file || C.intro}</p>
+        <p className="muted-cell ema-bt-file">{file || (source === 'scanner' ? 'Pick one of your scans and a date range: the server finds every stock-day the scan matches over the saved history, then runs this strategy on each (the scan decides which stocks; the strategy decides the trade).' : C.intro)}</p>
         {changed && <p className="muted-cell ema-bt-file">Settings changed since this run — click “Run again” to use them.</p>}
         {err && <p className="status err tk-pos-msg">{err}</p>}
       </section>

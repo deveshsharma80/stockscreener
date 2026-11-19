@@ -1476,3 +1476,34 @@ tr.ema-alert td { background: color-mix(in srgb, #b91c1c 10%, transparent); }
 tr.bt-out td { opacity: 0.45; }
 .set-pct { width: 80px; text-align: right; }
 .set-card + .set-card { margin-top: 16px; }
+/* Scanners */
+.sc-editor { margin-top: 16px; }
+.sc-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.sc-name { flex: 1 1 280px; font-size: 15px; font-weight: 600; }
+.sc-in, .sc-sel { font: inherit; font-size: 13px; padding: 4px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.sc-in:focus, .sc-sel:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.sc-num { width: 92px; }
+.sc-arg { width: 52px; padding: 3px 4px; }
+.sc-time { width: 104px; }
+.sc-sub { margin: 14px 0 6px; }
+.sc-conds { display: flex; flex-direction: column; gap: 8px; border-left: 2px solid var(--border); padding-left: 12px; }
+.sc-cond { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 0; }
+.sc-cond.sc-off { opacity: 0.45; }
+.sc-side, .sc-term { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.sc-kind { color: var(--muted); }
+.sc-strong { font-weight: 600; }
+.sc-cmp { color: #c084fc; font-weight: 600; }
+.sc-op { color: #c084fc; font-weight: 700; }
+.sc-args { display: inline-flex; align-items: center; gap: 2px; }
+.sc-plus { font-size: 12px; }
+.sc-x { color: var(--muted); font-size: 16px; }
+.sc-row-tools { display: inline-flex; gap: 8px; align-items: center; margin-left: auto; }
+.sc-read { flex-basis: 100%; font-size: 12px; font-family: var(--mono, ui-monospace, monospace); }
+.sc-foot { padding: 14px 0 0; }
+.sc-summary div { font-size: 12px; font-family: var(--mono, ui-monospace, monospace); }
+.sc-actions { white-space: nowrap; }
+.sc-actions .btn + .btn { margin-left: 6px; }
+.sc-hits { max-height: 520px; overflow: auto; }
+.bt-source { margin: 0 0 8px; }
+.journal td.sc-summary, .journal td.sc-summary div { white-space: normal; word-break: break-word; }
+.journal td.sc-actions { width: 1%; }
