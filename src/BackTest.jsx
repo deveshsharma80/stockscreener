@@ -1,16 +1,10 @@
 import { useState } from 'react';
 import EmaBacktest from './EmaBacktest.jsx';
-import RangeBacktest from './RangeBacktest.jsx';
-import MomentumBacktest from './MomentumBacktest.jsx';
-import TrailBacktest from './TrailBacktest.jsx';
 
 // Auto Trading → Back Test: one place for every strategy's backtest. Add a strategy by
 // adding a row here: [id, name, one-line description, component].
 const STRATEGIES = [
   ['ema-rejection', 'EMA Rejection', 'Gap-down stocks (“Futures April 2025”) whose bounce is rejected at the 9 / 26 EMA on 5-minute candles — short.', EmaBacktest],
-  ['range-breakout', 'Range breakout', 'A stock stays within about 1% for 30–60 minutes, then a 5-minute candle closes outside the range on a volume jump — long above, short below.', RangeBacktest],
-  ['momentum-pullback', 'Momentum pullback', 'A green 2-minute candle above 4%, a pullback to the 2-minute 9 EMA, then a break of the day’s high — long, out on a close below the 9 EMA or the 5 / 9 EMA cross.', MomentumBacktest],
-  ['ema9-trail', 'Ride the 9 EMA', 'Enter the moment the scan hits — buy (long) or sell (short); stay in while price holds the 9 EMA — out on a (sharp) close through it, or at 15:15.', TrailBacktest],
 ];
 const KEY = 'stockhits.backtestStrategy';
 

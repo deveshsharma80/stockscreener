@@ -325,6 +325,7 @@ export default function Scanners() {
                   <td className="sc-actions">
                     <button className="btn" onClick={(e) => (e.stopPropagation(), setEditing(clone(s)))}>Edit</button>
                     <button className="btn" onClick={(e) => (e.stopPropagation(), setEditing({ ...clone(s), id: undefined, name: `${s.name} (copy)` }))}>Copy</button>
+                    <button className="btn danger-outline" disabled={busy} onClick={(e) => (e.stopPropagation(), remove(s))}>Delete</button>
                   </td>
                 </tr>
               ))}

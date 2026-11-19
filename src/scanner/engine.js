@@ -310,16 +310,6 @@ export function warmupDays(scan) {
 
 const P = (f, tf = 5, off = 0) => ({ t: 'price', f, tf, off });
 const N = (v) => ({ t: 'num', v });
-const I = (ind, n, off = 0, tf = 5) => ({ t: 'ind', ind, n, tf, off });
-// Range breakout: the 8 five-minute candles before the latest one (40 min) stayed within 1%
-// (highest high ÷ lowest low < 1.01), then the latest candle closes outside that range on at
-// least twice their average volume. Change 8 to 6 (30 min) … 12 (1 hour) to taste.
-const rangeBase = [
-  { left: { a: I('hhv', 8, 1), op: '/', b: I('llv', 8, 1) }, cmp: '<', right: { a: N(1.01) } },
-  { left: { a: P('volume') }, cmp: '>', right: { a: I('avgvol', 8, 1), op: '*', b: N(2) } },
-  { left: { a: P('volume') }, cmp: '>', right: { a: N(50000) } },
-  { left: { a: P('close') }, cmp: '>', right: { a: N(100) } },
-];
 export const TEMPLATES = [
   {
     name: 'Bollinger first candle (5 min)',
@@ -347,38 +337,6 @@ export const TEMPLATES = [
       { left: { a: P('close') }, cmp: '>', right: { a: { t: 'ind', ind: 'ema', n: 20, tf: 5, off: 0 } }, off: true },
       { left: { a: { t: 'ind', ind: 'rsi', n: 14, tf: 5, off: 0 } }, cmp: '<', right: { a: N(40) } },
       { left: { a: P('close') }, cmp: '<', right: { a: N(999) } },
-    ],
-  },
-  {
-    name: 'Range breakout UP (40 min within 1%, 2× volume)',
-    tf: 5,
-    at: 'window',
-    from: '10:00',
-    to: '14:30',
-    firstOnly: true,
-    conditions: [{ left: { a: P('close') }, cmp: '>', right: { a: I('hhv', 8, 1) } }, ...rangeBase],
-  },
-  {
-    name: 'Range breakout DOWN (40 min within 1%, 2× volume)',
-    tf: 5,
-    at: 'window',
-    from: '10:00',
-    to: '14:30',
-    firstOnly: true,
-    conditions: [{ left: { a: P('close') }, cmp: '<', right: { a: I('llv', 8, 1) } }, ...rangeBase],
-  },
-  {
-    // feeds Back Test → Momentum pullback: a green 2-minute candle of more than 4 %
-    name: '2-min candle above 4% (Momentum pullback)',
-    tf: 2,
-    at: 'window',
-    from: '09:15',
-    to: '13:00',
-    firstOnly: true,
-    conditions: [
-      { left: { a: P('close', 2), op: '/', b: P('open', 2) }, cmp: '>', right: { a: N(1.04) } },
-      { left: { a: P('close', 2) }, cmp: '>', right: { a: N(100) } },
-      { left: { a: P('volume', 2) }, cmp: '>', right: { a: N(25000) } },
     ],
   },
 ];

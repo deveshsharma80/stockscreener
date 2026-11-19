@@ -5,7 +5,7 @@ import { historyCall } from './historyApi.js';
 // Auto Trading → Back Test, shared by every strategy. Upload a Chartink backtest export
 // (Date, Symbol, …); for each stock the server fetches 1-minute candles from Dhan once and
 // runs the strategy's rules day by day (POST /api/ticker action=backtest). The strategy's
-// config (EmaBacktest.jsx, BbBacktest.jsx) says how to read a row and which exits to score.
+// config (EmaBacktest.jsx) says how to read a row and which exits to score.
 //
 // config = {
 //   id, intro, leverage,
