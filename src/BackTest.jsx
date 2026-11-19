@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import EmaBacktest from './EmaBacktest.jsx';
+import HalfBacktest from './HalfBacktest.jsx';
 
 // Auto Trading → Back Test: one place for every strategy's backtest. Add a strategy by
 // adding a row here: [id, name, one-line description, component].
 const STRATEGIES = [
   ['ema-rejection', 'EMA Rejection', 'Gap-down stocks (“Futures April 2025”) whose bounce is rejected at the 9 / 26 EMA on 5-minute candles — short.', EmaBacktest],
+  ['half-eaten', 'Big candle half eaten', 'A green daily candle of 14 % or more; on a later day, when price falls back to the middle of its body — short, covered at 15:15. No stop loss.', HalfBacktest],
 ];
 const KEY = 'stockhits.backtestStrategy';
 

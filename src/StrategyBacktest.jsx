@@ -155,7 +155,7 @@ export default function StrategyBacktest({ config }) {
   const [onlyTrades, setOnlyTrades] = useState(false);
   const [cap, setCap] = useState(saved?.cap ?? 3);
   // where the stock-days come from: a Chartink CSV, or one of your Scanners on the server history
-  const [source, setSource] = useState(saved?.source || 'csv');
+  const [source, setSource] = useState(C.csvOnly ? 'csv' : saved?.source || 'csv');
   const [scans, setScans] = useState([]);
   const [scanId, setScanId] = useState(saved?.scanId || '');
   const [range, setRange] = useState(saved?.range || { from: '', to: '', minTurn: 0 });
@@ -317,13 +317,13 @@ export default function StrategyBacktest({ config }) {
   return (
     <>
       <section className="card">
-        <div className="filters bt-source">
+        {!C.csvOnly && <div className="filters bt-source">
           <span className="muted-cell">Stocks from</span>
           <div className="seg" role="group" aria-label="Source">
             <button className={source === 'csv' ? 'on' : ''} disabled={!!progress} onClick={() => setSource('csv')}>Chartink CSV</button>
             <button className={source === 'scanner' ? 'on' : ''} disabled={!!progress} onClick={() => setSource('scanner')}>My scanner (server history)</button>
           </div>
-        </div>
+        </div>}
         <div className="filters">
           {!secret ? (
             <span className="status err">Sign in with your secret on the Market page to run a backtest.</span>
@@ -333,10 +333,10 @@ export default function StrategyBacktest({ config }) {
                 {progress ? 'Running…' : 'Upload Chartink backtest CSV'}
                 <input type="file" accept=".csv,text/csv" hidden disabled={!!progress} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
               </label>
-              <label className="ema-day">
+              {C.firstOnly !== false && <label className="ema-day">
                 <input type="checkbox" checked={firstOnly} onChange={(e) => setFirstOnly(e.target.checked)} disabled={!!progress} />
                 <span>Only stocks at the first candle (09:15)</span>
-              </label>
+              </label>}
             </>
           ) : (
             <>
