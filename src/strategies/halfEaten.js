@@ -1,4 +1,5 @@
-// Strategy: Big candle half eaten (short, intraday).
+// Strategy: Big candle half eaten (intraday) — short at the middle (default), or buy there
+// (side: 'long': bet that the middle holds as support; exits mirrored).
 //   Setup:  a green daily candle whose close is at least bigPct % above its open (Chartink
 //           daily scan → the CSV's date is the big candle's day).
 //   Trigger: on a later day (within waitDays trading days), price falls to the middle of that
@@ -18,6 +19,7 @@
 import { istDate, istHHMM } from '../emasetup.js';
 
 export const HALF_DEFAULTS = {
+  side: 'short', // 'short' = sell at the middle · 'long' = buy at the middle
   bigPct: 14, // the big candle: close ≥ open × (1 + bigPct %) — rows below this are skipped
   waitDays: 10, // trading days after the big day to wait for the middle
   lastEntry: '15:00',
@@ -25,10 +27,10 @@ export const HALF_DEFAULTS = {
 };
 
 export const HALF_EXITS = [
-  ['hold', 'Cover at 15:15', 'short at the middle, covered the same day at 15:15'],
-  ['t2', 'Target 2%', '2 % fall, else covered at 15:15'],
-  ['t5', 'Target 5%', '5 % fall, else covered at 15:15'],
-  ['next', 'Hold to next day', 'kept overnight, covered at the next day’s 15:15 (stock futures only)'],
+  ['hold', 'Exit at 15:15', 'entered at the middle, closed the same day at 15:15'],
+  ['t2', 'Target 2%', '2 % in your favour, else closed at 15:15'],
+  ['t5', 'Target 5%', '5 % in your favour, else closed at 15:15'],
+  ['next', 'Hold to next day', 'kept overnight, closed at the next day’s 15:15 (a short needs stock futures; a long is a delivery buy)'],
 ];
 
 const r2 = (v) => (v == null || !Number.isFinite(v) ? null : Math.round(v * 100) / 100);
@@ -64,6 +66,9 @@ export function runHalfEaten({ c1, day, params = {} }) {
     const t = istHHMM(c.time);
     const out = { ...base, daysAfter: k + 1, triggerDay: d, gapBelow: i === 0 && c.open <= mid };
     if (t >= P.lastEntry) return { ...out, status: 'late', note: `the middle was reached at ${t} on ${d} — after ${P.lastEntry}` };
+    const long = P.side === 'long';
+    const dir = long ? 1 : -1; // profit = dir × (exit − entry)
+    // the fall reaches the middle: a short sells there, a long buys there (at the open if it opened below)
     const entry = r2(c.open <= mid ? c.open : mid);
     const rest = mins.slice(i).filter((m) => istHHMM(m.time) < P.exitBy);
     const last = rest[rest.length - 1] || c;
@@ -72,19 +77,20 @@ export function runHalfEaten({ c1, day, params = {} }) {
     let best = 0;
     for (let j = 0; j < rest.length; j++) {
       const m = rest[j];
-      if (j > 0) worst = Math.max(worst, m.high - entry);
-      best = Math.max(best, entry - m.low);
+      if (j > 0) worst = Math.max(worst, long ? entry - m.low : m.high - entry);
+      best = Math.max(best, long ? m.high - entry : entry - m.low);
     }
-    const pct = (px) => r2(((entry - px) / entry) * 100);
-    const res = { ...out, status: 'entered', entry, entryAt: t };
+    const pct = (px) => r2(((dir * (px - entry)) / entry) * 100);
+    const res = { ...out, status: 'entered', side: long ? 'long' : 'short', entry, entryAt: t };
     for (const [key, tgtPct] of [['hold', null], ['t2', 2], ['t5', 5]]) {
       let d0 = null;
       if (tgtPct != null) {
-        const tgt = entry * (1 - tgtPct / 100);
+        const tgt = entry * (1 + (dir * tgtPct) / 100);
         for (let j = 0; j < rest.length; j++) {
           const m = rest[j];
-          if (m.low <= tgt) {
-            d0 = { px: j > 0 && m.open < tgt ? m.open : tgt, at: istHHMM(m.time), how: 'target' };
+          // a long's target can't count in the fill minute (its high may have come before the fall)
+          if (long ? j > 0 && m.high >= tgt : m.low <= tgt) {
+            d0 = { px: j > 0 && dir * (m.open - tgt) > 0 ? m.open : tgt, at: istHHMM(m.time), how: 'target' };
             break;
           }
         }
@@ -96,7 +102,7 @@ export function runHalfEaten({ c1, day, params = {} }) {
     const nextMins = nd ? byDay.get(nd).filter((m) => istHHMM(m.time) < P.exitBy) : null;
     if (nextMins?.length) {
       const px = nextMins[nextMins.length - 1].close;
-      const nextWorst = Math.max(...nextMins.map((m) => m.high)) - entry;
+      const nextWorst = long ? entry - Math.min(...nextMins.map((m) => m.low)) : Math.max(...nextMins.map((m) => m.high)) - entry;
       res.next = { px: r2(px), at: `${nd.slice(5)} 15:15`, how: 'next day', pct: pct(px), r: pct(px) };
       res.nextWorstPct = r2((Math.max(nextWorst, 0) / entry) * 100);
     } else res.next = { ...res.hold, how: 'no next day yet' };
