@@ -37,6 +37,7 @@ const SRC = fs.existsSync(path.join(HERE, 'src', 'scanner', 'engine.js')) ? path
 const engine = await import(path.join(SRC, 'scanner', 'engine.js'));
 const ema = await import(path.join(SRC, 'emasetup.js'));
 const bbs = await import(path.join(SRC, 'strategies', 'bbBreakout.js'));
+const rbs = await import(path.join(SRC, 'strategies', 'rangeBreakout.js'));
 
 loadEnv('/etc/stockhits/feed.env');
 const APP = (process.env.APP_URL || 'https://devtradingapp.com').replace(/\/$/, '');
@@ -474,6 +475,8 @@ async function scanAll({ scan, from, to, minTurnoverCr = 0, strategy = null, par
         rows.push({ ...base, ...setup, outcome: c1Day.length ? ema.simulate(c1Day, setup) : null });
       } else if (strategy === 'bb-breakout') {
         rows.push({ ...base, ...bbs.runBbBreakout({ c5, c1Day, day, params: { ...params, skipSetup: true } }) });
+      } else if (strategy === 'range-breakout') {
+        rows.push({ ...base, ...rbs.runRangeBreakout({ c5, c1Day, day, params, at: hit.time }) });
       } else throw Object.assign(new Error(`Unknown strategy ${strategy}`), { status: 400 });
     }
   }

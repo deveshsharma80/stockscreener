@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import EmaBacktest from './EmaBacktest.jsx';
+import RangeBacktest from './RangeBacktest.jsx';
 
 // Auto Trading → Back Test: one place for every strategy's backtest. Add a strategy by
 // adding a row here: [id, name, one-line description, component].
 const STRATEGIES = [
   ['ema-rejection', 'EMA Rejection', 'Gap-down stocks (“Futures April 2025”) whose bounce is rejected at the 9 / 26 EMA on 5-minute candles — short.', EmaBacktest],
+  ['range-breakout', 'Range breakout', 'A stock stays within about 1% for 30–60 minutes, then a 5-minute candle closes outside the range on a volume jump — long above, short below.', RangeBacktest],
 ];
 const KEY = 'stockhits.backtestStrategy';
 
