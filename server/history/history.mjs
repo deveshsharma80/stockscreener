@@ -38,6 +38,7 @@ const engine = await import(path.join(SRC, 'scanner', 'engine.js'));
 const ema = await import(path.join(SRC, 'emasetup.js'));
 const bbs = await import(path.join(SRC, 'strategies', 'bbBreakout.js'));
 const rbs = await import(path.join(SRC, 'strategies', 'rangeBreakout.js'));
+const mps = await import(path.join(SRC, 'strategies', 'momentumPullback.js'));
 
 loadEnv('/etc/stockhits/feed.env');
 const APP = (process.env.APP_URL || 'https://devtradingapp.com').replace(/\/$/, '');
@@ -477,6 +478,8 @@ async function scanAll({ scan, from, to, minTurnoverCr = 0, strategy = null, par
         rows.push({ ...base, ...bbs.runBbBreakout({ c5, c1Day, day, params: { ...params, skipSetup: true } }) });
       } else if (strategy === 'range-breakout') {
         rows.push({ ...base, ...rbs.runRangeBreakout({ c5, c1Day, day, params, at: hit.time }) });
+      } else if (strategy === 'momentum-pullback') {
+        rows.push({ ...base, ...mps.runMomentumPullback({ c1: upto.filter((c) => c.time * 1000 >= end - 6 * 86_400_000), day, params, at: hit.time }) });
       } else throw Object.assign(new Error(`Unknown strategy ${strategy}`), { status: 400 });
     }
   }

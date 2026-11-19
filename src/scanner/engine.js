@@ -367,4 +367,18 @@ export const TEMPLATES = [
     firstOnly: true,
     conditions: [{ left: { a: P('close') }, cmp: '<', right: { a: I('llv', 8, 1) } }, ...rangeBase],
   },
+  {
+    // feeds Back Test → Momentum pullback: a green 2-minute candle of more than 4 %
+    name: '2-min candle above 4% (Momentum pullback)',
+    tf: 2,
+    at: 'window',
+    from: '09:15',
+    to: '13:00',
+    firstOnly: true,
+    conditions: [
+      { left: { a: P('close', 2), op: '/', b: P('open', 2) }, cmp: '>', right: { a: N(1.04) } },
+      { left: { a: P('close', 2) }, cmp: '>', right: { a: N(100) } },
+      { left: { a: P('volume', 2) }, cmp: '>', right: { a: N(25000) } },
+    ],
+  },
 ];
