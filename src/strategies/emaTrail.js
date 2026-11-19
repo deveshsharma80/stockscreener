@@ -8,6 +8,8 @@
 //     two    — two closes in a row below the 9 EMA
 //     hold   — kept to 15:15
 //   Exits on a close happen at that candle's close. Everything is sold by 15:15.
+//   Planned exit: every exit also sells at +targetPct % (1.5 by default) if price gets there
+//   first — a limit order, filled at the target (at the open if a candle opens above it).
 //   Optional protective stop at the hit candle's low (stop: 'candle'); with no stop, 1R = 1 %.
 // Pure functions — used by the history server, Vercel's backtest and the page.
 import { istDate, istHHMM } from '../emasetup.js';
@@ -17,6 +19,7 @@ export const TRAIL_DEFAULTS = {
   ema: 9,
   sharpPct: 0.5, // "sharply below" = close more than this % under the EMA
   stop: 'none', // 'none' | 'candle' (hit candle's low)
+  targetPct: 1.5, // planned exit: sell at +this % if it comes before the EMA exit (0 = no target)
   exitBy: '15:15',
 };
 
@@ -96,6 +99,8 @@ export function runEmaTrail({ c1, day, params = {}, at = null }) {
   let best = 0;
   let last = null;
   const sharp = 1 - P.sharpPct / 100;
+  const tgt = Number(P.targetPct) > 0 ? entry * (1 + Number(P.targetPct) / 100) : null;
+  out.target = r2(tgt);
   for (let i = hi; i < cs.length; i++) {
     const c = cs[i];
     if (istDate(c.time * 1000) !== day) break;
@@ -111,6 +116,8 @@ export function runEmaTrail({ c1, day, params = {}, at = null }) {
     for (const k of ['close', 'sharp', 'two', 'hold']) {
       if (done[k]) continue;
       if (stop) done[k] = { px: c.open < sl && c.time > first.time ? c.open : sl, at: t, how: 'stop' };
+      // the high comes before this candle's close, so a target touched in it beats a close-based exit
+      else if (tgt != null && c.high >= tgt) done[k] = { px: c.open > tgt && c.time > first.time ? c.open : tgt, at: t, how: 'target' };
       else if ((k === 'close' && isBelow) || (k === 'sharp' && e[i] != null && c.close < e[i] * sharp) || (k === 'two' && below >= 2)) done[k] = { px: c.close, at: closeT, how: k === 'close' ? 'below 9 EMA' : k === 'sharp' ? 'sharp drop' : '2 closes below' };
     }
     if (!stop) best = Math.max(best, c.high - entry);

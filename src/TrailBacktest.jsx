@@ -17,6 +17,7 @@ export const TRAIL_BACKTEST = {
     { key: 'tf', label: 'EMA candles (min)', type: 'select', def: String(D.tf), options: [['2', '2 min'], ['3', '3 min'], ['5', '5 min'], ['15', '15 min']] },
     { key: 'ema', label: 'EMA length', type: 'number', step: 1, def: D.ema },
     { key: 'sharpPct', label: '“Sharp” = % below EMA', type: 'number', step: 0.1, def: D.sharpPct },
+    { key: 'targetPct', label: 'Profit target % (0 = off)', type: 'number', step: 0.25, def: D.targetPct },
     { key: 'stop', label: 'Stop loss', type: 'select', def: D.stop, options: [['none', 'None (EMA exits only)'], ['candle', 'Hit candle low']] },
   ],
   exits: TRAIL_EXITS,
