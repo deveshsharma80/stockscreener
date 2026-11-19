@@ -177,6 +177,12 @@ export default function AutoTrade() {
             <button className={acct.exitMode === 'hold' ? 'on' : ''} disabled={!!busy} onClick={() => acct.exitMode !== 'hold' && act('auto-settings', { exitMode: 'hold' })}>Hold to {rules.exitTime}</button>
             <button className={acct.exitMode === '2R' ? 'on' : ''} disabled={!!busy} onClick={() => acct.exitMode !== '2R' && act('auto-settings', { exitMode: '2R' })}>Fixed 1:2</button>
           </div>
+          <label className="ema-day" title="A short whose entry triggers before this time is cancelled">
+            <span>Earliest entry</span>
+            <select className="auto-amount auto-time" value={acct.earliestEntry} disabled={!!busy} onChange={(e) => act('auto-settings', { earliestEntry: e.target.value }, `Earliest entry: ${e.target.value}.`)}>
+              {(rules.entryTimes || ['10:30']).map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </label>
           <span className="push" />
           <label className="ema-day">
             <span>Amount (₹)</span>
@@ -194,7 +200,7 @@ export default function AutoTrade() {
         </div>
         {msg && <p className={`status ${msg.ok ? 'ok' : 'err'} tk-pos-msg`}>{msg.text}</p>}
         <p className="muted-cell auto-rules">
-          Paper money, separate from Paper Trading{acct.isDefault ? ' (₹5,00,000 until you set an amount)' : ''}. On each <b>EMA Rejection</b> alert: short below the alert candle’s low, stop loss above the bounce,
+          Paper money, separate from Paper Trading{acct.isDefault ? ' (₹5,00,000 until you set an amount)' : ''}. On each <b>EMA Rejection</b> alert: short below the alert candle’s low — only if that happens from <b>{acct.earliestEntry}</b> (earlier entries are cancelled) — stop loss above the bounce,
           {acct.exitMode === '2R' ? ' target 1:2,' : ''} everything covered at {rules.exitTime}. At most <b>{rules.maxPerDay} shorts a day</b>, each = account × {rules.leverage} ÷ {rules.maxPerDay} (the full {rules.leverage}× intraday leverage over {rules.maxPerDay} trades). No new entries after {rules.lastEntry}. Charges at Dhan intraday rates.
           {!live.live && marketOpen && ' Live prices are off right now, so checks run once a minute.'}
         </p>

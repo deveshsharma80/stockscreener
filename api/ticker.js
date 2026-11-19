@@ -45,7 +45,7 @@
 //
 // Automated trading (EMA Rejection shorts, own money — lib/autotrade.js):
 // GET  ?action=auto                                    account, rules, trades, P&L
-// POST {action:"auto-settings", enabled?, exitMode?: "hold"|"2R"}
+// POST {action:"auto-settings", enabled?, exitMode?: "hold"|"2R", earliestEntry?: "10:30"…}
 // POST {action:"auto-reset", amount}                   new period with this amount (no open shorts)
 // POST {action:"auto-close", id}                       cover an open short now / cancel a waiting one
 //
@@ -152,7 +152,7 @@ export default async function handler(req, res) {
       case 'GET auto':
         return res.json({ ok: true, ...(await autoView(quoteKeys)), market: marketStatus() });
       case 'POST auto-settings':
-        return res.json({ ok: true, account: await setAutoSettings({ enabled: body.enabled, exitMode: body.exitMode }), ...(await autoAfterChange()) });
+        return res.json({ ok: true, account: await setAutoSettings({ enabled: body.enabled, exitMode: body.exitMode, earliestEntry: body.earliestEntry }), ...(await autoAfterChange()) });
       case 'POST auto-reset':
         return res.json({ ok: true, account: await resetAuto(body.amount), ...(await autoAfterChange()) });
       case 'POST auto-close': {

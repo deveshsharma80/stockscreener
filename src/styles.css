@@ -1507,3 +1507,4 @@ tr.bt-out td { opacity: 0.45; }
 .bt-source { margin: 0 0 8px; }
 .journal td.sc-summary, .journal td.sc-summary div { white-space: normal; word-break: break-word; }
 .journal td.sc-actions { width: 1%; }
+.auto-time { width: auto; padding: 5px 8px; }
