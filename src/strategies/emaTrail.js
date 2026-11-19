@@ -1,4 +1,5 @@
-// Strategy: Buy on the scan hit, ride it while price holds above the 9 EMA (long).
+// Strategy: Enter on the scan hit, ride it while price holds the 9 EMA — long (buy, ride above
+// the EMA) or short (side: 'short': sell, ride below the EMA; every rule mirrored).
 //   Entry:  at the close of the scan's hit candle (= the next minute's open) — the moment a
 //           live scan would alert. The hit time comes from the CSV (Chartink "9:40 am" = the
 //           09:40 candle) or from My scanner.
@@ -15,6 +16,7 @@
 import { istDate, istHHMM } from '../emasetup.js';
 
 export const TRAIL_DEFAULTS = {
+  side: 'long', // 'long' | 'short'
   tf: 5, // candle minutes for the 9 EMA and the hit candle
   ema: 9,
   sharpPct: 0.5, // "sharply below" = close more than this % under the EMA
@@ -24,9 +26,9 @@ export const TRAIL_DEFAULTS = {
 };
 
 export const TRAIL_EXITS = [
-  ['close', 'Close below 9 EMA', 'first candle close below the 9 EMA'],
-  ['sharp', 'Sharp close below', 'first close more than the set % below the 9 EMA'],
-  ['two', '2 closes below', 'two candle closes in a row below the 9 EMA'],
+  ['close', 'Close through 9 EMA', 'first candle close through the 9 EMA (below it for a long, above it for a short)'],
+  ['sharp', 'Sharp close through', 'first close more than the set % through the 9 EMA'],
+  ['two', '2 closes through', 'two candle closes in a row through the 9 EMA'],
   ['hold', 'Hold to 15:15', 'no EMA exit'],
 ];
 
@@ -88,18 +90,21 @@ export function runEmaTrail({ c1, day, params = {}, at = null }) {
   const dayMins = c1.filter((c) => istDate(c.time * 1000) === day);
   const first = dayMins.find((c) => c.time >= buyAfter);
   if (!first || istHHMM(first.time) >= P.exitBy) return { status: 'no-entry', note: `hit after ${P.exitBy}` };
+  const short = P.side === 'short';
+  const dir = short ? -1 : 1; // profit = dir × (exit − entry)
   const entry = r2(first.open);
-  const sl = P.stop === 'candle' ? r2(hit.low) : null;
-  const risk = sl != null && entry - sl > 0 ? entry - sl : entry * 0.01;
-  const out = { status: 'entered', hitAt: at, entry, entryAt: istHHMM(first.time), sl, ema0: r2(e[hi]), above: e[hi] != null ? r2((entry / e[hi] - 1) * 100) : null, riskPct: r2((risk / entry) * 100) };
+  const sl = P.stop === 'candle' ? r2(short ? hit.high : hit.low) : null;
+  const risk = sl != null && dir * (entry - sl) > 0 ? dir * (entry - sl) : entry * 0.01;
+  const out = { status: 'entered', side: short ? 'short' : 'long', hitAt: at, entry, entryAt: istHHMM(first.time), sl, ema0: r2(e[hi]), above: e[hi] != null ? r2((entry / e[hi] - 1) * 100) : null, riskPct: r2((risk / entry) * 100) };
 
   // walk tf candles that close after the entry
   const done = {};
   let below = 0;
   let best = 0;
   let last = null;
-  const sharp = 1 - P.sharpPct / 100;
-  const tgt = Number(P.targetPct) > 0 ? entry * (1 + Number(P.targetPct) / 100) : null;
+  const sharp = 1 - (dir * P.sharpPct) / 100;
+  const tgt = Number(P.targetPct) > 0 ? entry * (1 + (dir * Number(P.targetPct)) / 100) : null;
+  const thru = short ? 'above' : 'below';
   out.target = r2(tgt);
   for (let i = hi; i < cs.length; i++) {
     const c = cs[i];
@@ -109,18 +114,18 @@ export function runEmaTrail({ c1, day, params = {}, at = null }) {
     const t = istHHMM(c.time);
     if (t >= P.exitBy || endT > Date.parse(`${day}T${P.exitBy}:00+05:30`) / 1000) break;
     last = c;
-    const stop = sl != null && c.low <= sl;
-    const isBelow = e[i] != null && c.close < e[i];
+    const stop = sl != null && (short ? c.high >= sl : c.low <= sl);
+    const isBelow = e[i] != null && (short ? c.close > e[i] : c.close < e[i]); // closed through the EMA, against us
     below = isBelow ? below + 1 : 0;
     const closeT = istHHMM(endT);
     for (const k of ['close', 'sharp', 'two', 'hold']) {
       if (done[k]) continue;
-      if (stop) done[k] = { px: c.open < sl && c.time > first.time ? c.open : sl, at: t, how: 'stop' };
+      if (stop) done[k] = { px: dir * (sl - c.open) > 0 && c.time > first.time ? c.open : sl, at: t, how: 'stop' };
       // the high comes before this candle's close, so a target touched in it beats a close-based exit
-      else if (tgt != null && c.high >= tgt) done[k] = { px: c.open > tgt && c.time > first.time ? c.open : tgt, at: t, how: 'target' };
-      else if ((k === 'close' && isBelow) || (k === 'sharp' && e[i] != null && c.close < e[i] * sharp) || (k === 'two' && below >= 2)) done[k] = { px: c.close, at: closeT, how: k === 'close' ? 'below 9 EMA' : k === 'sharp' ? 'sharp drop' : '2 closes below' };
+      else if (tgt != null && (short ? c.low <= tgt : c.high >= tgt)) done[k] = { px: dir * (c.open - tgt) > 0 && c.time > first.time ? c.open : tgt, at: t, how: 'target' };
+      else if ((k === 'close' && isBelow) || (k === 'sharp' && e[i] != null && dir * (c.close - e[i] * sharp) < 0) || (k === 'two' && below >= 2)) done[k] = { px: c.close, at: closeT, how: k === 'close' ? `${thru} 9 EMA` : k === 'sharp' ? `sharp close ${thru}` : `2 closes ${thru}` };
     }
-    if (!stop) best = Math.max(best, c.high - entry);
+    if (!stop) best = Math.max(best, short ? entry - c.low : c.high - entry);
     if (Object.keys(done).length === 4) break;
   }
   // sold at 15:15: last full candle's close, or the last minute before 15:15
@@ -128,7 +133,7 @@ export function runEmaTrail({ c1, day, params = {}, at = null }) {
   const endPx = lastMin ? lastMin.close : last ? last.close : entry;
   for (const k of ['close', 'sharp', 'two', 'hold']) {
     const d = done[k] || { px: endPx, at: P.exitBy, how: 'time' };
-    out[k] = { ...d, px: r2(d.px), r: r2((d.px - entry) / risk), pct: r2(((d.px - entry) / entry) * 100) };
+    out[k] = { ...d, px: r2(d.px), r: r2((dir * (d.px - entry)) / risk), pct: r2(((dir * (d.px - entry)) / entry) * 100) };
   }
   out.bestR = r2(best / risk);
   out.bestPct = r2((best / entry) * 100);
