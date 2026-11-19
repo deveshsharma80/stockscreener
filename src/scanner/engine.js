@@ -9,7 +9,10 @@
 // Side = { a: Term, op?: '+'|'-'|'*'|'/', b?: Term }   e.g. Close / Open,  UpperBB(25,2) * 1.003
 // Term = { t: 'num', v }                                a number
 //      | { t: 'price', f: 'open'|'high'|'low'|'close'|'volume', tf, off }
-//      | { t: 'ind', ind: 'ema'|'sma'|'bbu'|'bbm'|'bbl'|'rsi'|'vwap', n, k?, src?, tf, off }
+//      | { t: 'ind', ind: 'ema'|'sma'|'bbu'|'bbm'|'bbl'|'rsi'|'vwap'|'hhv'|'llv'|'avgvol', n, k?, src?, tf, off }
+//        hhv / llv = highest high / lowest low of the last n candles (including [off]);
+//        avgvol = average volume of the last n candles. With [1] they cover the n candles
+//        before the latest one, e.g. a range the latest candle breaks out of.
 // tf = 1, 2, 3, 5 or 15 minutes · off = candles ago ([0] = latest closed, [1] = the one before)
 // cmp = '>' '>=' '<' '<=' 'xa' (crossed above) 'xb' (crossed below)
 //
@@ -29,6 +32,9 @@ export const INDICATORS = [
   ['bbl', 'Lower Bollinger band', ['Length', 'Std dev'], [20, 2]],
   ['rsi', 'RSI', ['Length'], [14]],
   ['vwap', 'VWAP (day)', [], []],
+  ['hhv', 'Highest high', ['Candles'], [8]],
+  ['llv', 'Lowest low', ['Candles'], [8]],
+  ['avgvol', 'Average volume', ['Candles'], [8]],
 ];
 export const COMPARE = [['>', 'Greater than'], ['>=', 'Greater or equal'], ['<', 'Less than'], ['<=', 'Less or equal'], ['xa', 'Crossed above'], ['xb', 'Crossed below']];
 export const ARITH = ['+', '-', '*', '/'];
@@ -163,6 +169,15 @@ function rsiOf(x, n) {
   }
   return out;
 }
+function extremeOf(x, n, hi) {
+  const out = new Array(x.length).fill(null);
+  for (let i = n - 1; i < x.length; i++) {
+    let m = x[i];
+    for (let j = i - n + 1; j < i; j++) if (hi ? x[j] > m : x[j] < m) m = x[j];
+    out[i] = m;
+  }
+  return out;
+}
 function vwapOf(cs) {
   const out = [];
   let day = null;
@@ -197,7 +212,7 @@ export function makeSeries(c1) {
     } else {
       const close = cs.map((c) => c.c);
       const n = Number(term.n);
-      s = term.ind === 'ema' ? emaOf(close, n) : term.ind === 'sma' ? smaOf(close, n) : term.ind === 'rsi' ? rsiOf(close, n) : term.ind === 'vwap' ? vwapOf(cs) : bbOf(close, n, Number(term.k), term.ind);
+      s = term.ind === 'hhv' ? extremeOf(cs.map((c) => c.h), n, true) : term.ind === 'llv' ? extremeOf(cs.map((c) => c.l), n, false) : term.ind === 'avgvol' ? smaOf(cs.map((c) => c.v), n) : term.ind === 'ema' ? emaOf(close, n) : term.ind === 'sma' ? smaOf(close, n) : term.ind === 'rsi' ? rsiOf(close, n) : term.ind === 'vwap' ? vwapOf(cs) : bbOf(close, n, Number(term.k), term.ind);
     }
     cache.set(key, s);
     return s;
@@ -295,6 +310,16 @@ export function warmupDays(scan) {
 
 const P = (f, tf = 5, off = 0) => ({ t: 'price', f, tf, off });
 const N = (v) => ({ t: 'num', v });
+const I = (ind, n, off = 0, tf = 5) => ({ t: 'ind', ind, n, tf, off });
+// Range breakout: the 8 five-minute candles before the latest one (40 min) stayed within 1%
+// (highest high ÷ lowest low < 1.01), then the latest candle closes outside that range on at
+// least twice their average volume. Change 8 to 6 (30 min) … 12 (1 hour) to taste.
+const rangeBase = [
+  { left: { a: I('hhv', 8, 1), op: '/', b: I('llv', 8, 1) }, cmp: '<', right: { a: N(1.01) } },
+  { left: { a: P('volume') }, cmp: '>', right: { a: I('avgvol', 8, 1), op: '*', b: N(2) } },
+  { left: { a: P('volume') }, cmp: '>', right: { a: N(50000) } },
+  { left: { a: P('close') }, cmp: '>', right: { a: N(100) } },
+];
 export const TEMPLATES = [
   {
     name: 'Bollinger first candle (5 min)',
@@ -323,5 +348,23 @@ export const TEMPLATES = [
       { left: { a: { t: 'ind', ind: 'rsi', n: 14, tf: 5, off: 0 } }, cmp: '<', right: { a: N(40) } },
       { left: { a: P('close') }, cmp: '<', right: { a: N(999) } },
     ],
+  },
+  {
+    name: 'Range breakout UP (40 min within 1%, 2× volume)',
+    tf: 5,
+    at: 'window',
+    from: '10:00',
+    to: '14:30',
+    firstOnly: true,
+    conditions: [{ left: { a: P('close') }, cmp: '>', right: { a: I('hhv', 8, 1) } }, ...rangeBase],
+  },
+  {
+    name: 'Range breakout DOWN (40 min within 1%, 2× volume)',
+    tf: 5,
+    at: 'window',
+    from: '10:00',
+    to: '14:30',
+    firstOnly: true,
+    conditions: [{ left: { a: P('close') }, cmp: '<', right: { a: I('llv', 8, 1) } }, ...rangeBase],
   },
 ];
