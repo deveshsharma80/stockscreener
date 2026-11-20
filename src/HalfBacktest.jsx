@@ -14,9 +14,11 @@ export const HALF_BACKTEST = {
   firstOnly: false,
   csvOnly: true, // the stocks come from a Chartink daily scan
   intro:
-    'Upload a Chartink backtest CSV of your daily scan (Date, Symbol …): each row is a big green day. The backtest watches the following days for the fall to the middle of that candle’s body and shorts there — or buys there with Side “Long” — no stop loss unless you set one. Candles from Dhan.',
+    'Upload a Chartink backtest CSV of your daily scan (Date, Symbol …): each row is a big green day. The backtest watches the following days for the fall to the trigger level — the middle of that candle’s body, or a set % below its open — and shorts there (or buys there with “Long”); no stop loss unless you set one. Candles from Dhan.',
   params: [
-    { key: 'side', label: 'At the middle', type: 'select', def: D.side, options: [['short', 'Short (sell)'], ['long', 'Long (buy)']] },
+    { key: 'side', label: 'At the level', type: 'select', def: D.side, options: [['short', 'Short (sell)'], ['long', 'Long (buy)']] },
+    { key: 'level', label: 'Trigger level', type: 'select', def: D.level, options: [['mid', 'Middle of the body (50%)'], ['base', 'Below the open (base)']] },
+    { key: 'basePct', label: '% below the open (base)', type: 'number', step: 0.5, def: D.basePct },
     { key: 'bigPct', label: 'Big candle body ≥ %', type: 'number', step: 1, def: D.bigPct },
     { key: 'stopPct', label: 'Stop loss % (0 = none)', type: 'number', step: 0.5, def: D.stopPct },
     { key: 'waitDays', label: 'Wait up to (trading days)', type: 'number', step: 1, def: D.waitDays },
@@ -24,7 +26,10 @@ export const HALF_BACKTEST = {
   ],
   exits: HALF_EXITS,
   statusOf(r) {
-    if (r.status === 'entered') return r.side === 'long' ? ['long', 'Half eaten → buy'] : ['rejected', 'Half eaten → short'];
+    if (r.status === 'entered') {
+      const what = r.levelKind === 'base' ? 'Below base' : 'Half eaten';
+      return r.side === 'long' ? ['long', `${what} → buy`] : ['rejected', `${what} → short`];
+    }
     if (r.status === 'not-eaten') return ['watching', 'Not eaten yet'];
     if (r.status === 'late') return ['touched', 'Eaten after cutoff'];
     if (r.status === 'no-setup') return ['expired', 'Body below %'];
@@ -37,14 +42,14 @@ export const HALF_BACKTEST = {
   },
   columns: [
     { head: 'Big candle', num: true, cell: (r) => (r.bigOpen ? <>{fmt(r.bigOpen)} → {fmt(r.bigClose)}{r.bodyPct != null && <div className="pos ema-note">+{r.bodyPct}%</div>}</> : '—') },
-    { head: 'Middle', num: true, cell: (r) => (r.mid ? fmt(r.mid) : '—') },
+    { head: 'Trigger', num: true, cell: (r) => (r.level ? <>{fmt(r.level)}<div className="muted-cell ema-note">{r.levelKind === 'base' ? 'below open' : 'middle'}</div></> : '—') },
     { head: 'Eaten on', num: true, cell: (r) => (r.triggerDay ? <>{r.triggerDay.slice(8)}-{r.triggerDay.slice(5, 7)}<div className="muted-cell ema-note">day {r.daysAfter}{r.gapBelow ? ' · opened below' : ''}</div></> : '—') },
     { head: 'Entry', num: true, cell: (r) => (r.entry ? <><b>{fmt(r.entry)} {r.side === 'long' ? '↑' : '↓'}</b><div className="muted-cell ema-note">at {r.entryAt}</div></> : '—') },
     { head: 'Worst against', num: true, cell: (r) => (r.worstPct != null ? <span className="neg">{r.worstPct}%</span> : '—') },
   ],
   csv: {
-    head: ['Side', 'Stop', 'Big open', 'Big close', 'Body %', 'Middle', 'Eaten on', 'Days after', 'Opened below middle', 'Entry', 'Worst against % (same day)', 'Worst against % (next day)'],
-    row: (r) => [r.side || '', r.sl ?? '', r.bigOpen ?? '', r.bigClose ?? '', r.bodyPct ?? '', r.mid ?? '', r.triggerDay || '', r.daysAfter ?? '', r.gapBelow ? 'yes' : '', r.entry ?? '', r.worstPct ?? '', r.nextWorstPct ?? ''],
+    head: ['Side', 'Stop', 'Big open', 'Big close', 'Body %', 'Middle', 'Trigger', 'Trigger type', 'Reached on', 'Days after', 'Opened below trigger', 'Entry', 'Worst against % (same day)', 'Worst against % (next day)'],
+    row: (r) => [r.side || '', r.sl ?? '', r.bigOpen ?? '', r.bigClose ?? '', r.bodyPct ?? '', r.mid ?? '', r.level ?? '', r.levelKind || '', r.triggerDay || '', r.daysAfter ?? '', r.gapBelow ? 'yes' : '', r.entry ?? '', r.worstPct ?? '', r.nextWorstPct ?? ''],
   },
 };
 

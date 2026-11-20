@@ -1,5 +1,7 @@
 // Strategy: Big candle half eaten (intraday) — short at the middle (default), or buy there
 // (side: 'long': bet that the middle holds as support; exits mirrored).
+// Trigger level (level): 'mid' = the middle of the body (default) · 'base' = basePct % below
+// the big candle's open (the whole candle eaten and then some).
 //   Setup:  a green daily candle whose close is at least bigPct % above its open (Chartink
 //           daily scan → the CSV's date is the big candle's day).
 //   Trigger: on a later day (within waitDays trading days), price falls to the middle of that
@@ -22,7 +24,9 @@ import { istDate, istHHMM } from '../emasetup.js';
 export const HALF_DEFAULTS = {
   side: 'short', // 'short' = sell at the middle · 'long' = buy at the middle
   bigPct: 14, // the big candle: close ≥ open × (1 + bigPct %) — rows below this are skipped
-  waitDays: 10, // trading days after the big day to wait for the middle
+  level: 'mid', // 'mid' = middle of the body · 'base' = basePct % below the big candle's open
+  basePct: 2,
+  waitDays: 10, // trading days after the big day to wait for the level
   stopPct: 0, // stop loss, % from the entry (0 = no stop — your rule)
   lastEntry: '15:00',
   exitBy: '15:15',
@@ -54,7 +58,10 @@ export function runHalfEaten({ c1, day, params = {} }) {
   const close = big[big.length - 1].close;
   const bodyPct = (close / open - 1) * 100;
   const mid = (open + close) / 2;
-  const base = { bigOpen: r2(open), bigClose: r2(close), bodyPct: r2(bodyPct), mid: r2(mid) };
+  const atBase = P.level === 'base';
+  const lvl = atBase ? open * (1 - (Number(P.basePct) || 0) / 100) : mid; // the price that triggers the entry
+  const lvlName = atBase ? `${Number(P.basePct) || 0}% below the open` : 'the middle';
+  const base = { bigOpen: r2(open), bigClose: r2(close), bodyPct: r2(bodyPct), mid: r2(mid), level: r2(lvl), levelKind: atBase ? 'base' : 'mid' };
   if (!(bodyPct >= P.bigPct)) return { ...base, status: 'no-setup', note: `body ${r2(bodyPct)}% on Dhan’s candles — below ${P.bigPct}%` };
 
   const after = [...byDay.keys()].filter((d) => d > day).sort();
@@ -62,16 +69,16 @@ export function runHalfEaten({ c1, day, params = {} }) {
   for (let k = 0; k < days.length; k++) {
     const d = days[k];
     const mins = byDay.get(d);
-    const i = mins.findIndex((c) => c.low <= mid);
+    const i = mins.findIndex((c) => c.low <= lvl);
     if (i < 0) continue;
     const c = mins[i];
     const t = istHHMM(c.time);
-    const out = { ...base, daysAfter: k + 1, triggerDay: d, gapBelow: i === 0 && c.open <= mid };
-    if (t >= P.lastEntry) return { ...out, status: 'late', note: `the middle was reached at ${t} on ${d} — after ${P.lastEntry}` };
+    const out = { ...base, daysAfter: k + 1, triggerDay: d, gapBelow: i === 0 && c.open <= lvl };
+    if (t >= P.lastEntry) return { ...out, status: 'late', note: `${lvlName} (${r2(lvl)}) was reached at ${t} on ${d} — after ${P.lastEntry}` };
     const long = P.side === 'long';
     const dir = long ? 1 : -1; // profit = dir × (exit − entry)
     // the fall reaches the middle: a short sells there, a long buys there (at the open if it opened below)
-    const entry = r2(c.open <= mid ? c.open : mid);
+    const entry = r2(c.open <= lvl ? c.open : lvl);
     const rest = mins.slice(i).filter((m) => istHHMM(m.time) < P.exitBy);
     const last = rest[rest.length - 1] || c;
     // worst move against the short (from the entry minute on, so the fill minute's high counts only after it)
@@ -120,5 +127,5 @@ export function runHalfEaten({ c1, day, params = {} }) {
     res.bestPct = res.bestR;
     return res;
   }
-  return { ...base, status: 'not-eaten', note: `didn’t fall to the middle (${r2(mid)}) within ${days.length} trading days` };
+  return { ...base, status: 'not-eaten', note: `didn’t fall to ${lvlName} (${r2(lvl)}) within ${days.length} trading days` };
 }

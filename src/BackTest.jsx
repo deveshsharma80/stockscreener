@@ -6,7 +6,7 @@ import HalfBacktest from './HalfBacktest.jsx';
 // adding a row here: [id, name, one-line description, component].
 const STRATEGIES = [
   ['ema-rejection', 'EMA Rejection', 'Gap-down stocks (“Futures April 2025”) whose bounce is rejected at the 9 / 26 EMA on 5-minute candles — short.', EmaBacktest],
-  ['half-eaten', 'Big candle half eaten', 'A green daily candle of 14 % or more; on a later day, when price falls back to the middle of its body — short there (or buy there), closed at 15:15. No stop loss.', HalfBacktest],
+  ['half-eaten', 'Big candle half eaten', 'A green daily candle of 14 % or more; on a later day, when price falls back to the middle of its body (or a set % below its open) — short there (or buy there), closed at 15:15.', HalfBacktest],
 ];
 const KEY = 'stockhits.backtestStrategy';
 
