@@ -355,4 +355,18 @@ export const TEMPLATES = [
       { left: { a: { t: 'ind', ind: 'rsi', n: 14, tf: 5, off: 0 } }, cmp: '>', right: { a: N(70) } },
     ],
   },
+  {
+    // feeds Back Test → Overextension short: a 5-minute close more than 3 % above the upper Bollinger band (30, 2)
+    name: 'Close 3% above upper BB 30 (Overextension short)',
+    tf: 5,
+    at: 'window',
+    from: '09:30',
+    to: '14:30',
+    firstOnly: true,
+    conditions: [
+      { left: { a: P('close') }, cmp: '>', right: { a: { t: 'ind', ind: 'bbu', n: 30, k: 2, tf: 5, off: 0 }, op: '*', b: N(1.03) } },
+      { left: { a: P('close') }, cmp: '>', right: { a: N(100) } },
+      { left: { a: P('volume') }, cmp: '>', right: { a: N(50000) } },
+    ],
+  },
 ];
