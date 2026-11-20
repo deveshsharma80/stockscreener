@@ -8,7 +8,7 @@ import ConfirmBacktest from './ConfirmBacktest.jsx';
 const STRATEGIES = [
   ['ema-rejection', 'EMA Rejection', 'Gap-down stocks (“Futures April 2025”) whose bounce is rejected at the 9 / 26 EMA on 5-minute candles — short.', EmaBacktest],
   ['half-eaten', 'Big candle half eaten', 'A green daily candle of 14 % or more; on a later day, when price falls back to the middle of its body — short there (or buy there), closed at 15:15. No stop loss.', HalfBacktest],
-  ['momentum-confirm', 'Momentum confirmation', 'Bullish scan’s first hit between 09:45 and 12:00; if the next candle is green and closes above the hit candle’s close — buy right away.', ConfirmBacktest],
+  ['momentum-confirm', 'Momentum confirmation', 'Bullish scan’s first hit between 09:45 and 14:00; if the next candle is green and closes above the hit candle’s close — buy right away.', ConfirmBacktest],
 ];
 const KEY = 'stockhits.backtestStrategy';
 

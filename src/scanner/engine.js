@@ -339,4 +339,20 @@ export const TEMPLATES = [
       { left: { a: P('close') }, cmp: '<', right: { a: N(999) } },
     ],
   },
+  {
+    // the Chartink bullish momentum screener (feeds Back Test → Momentum confirmation)
+    name: 'Bullish momentum (RSI > 70)',
+    tf: 5,
+    at: 'window',
+    from: '09:45',
+    to: '14:00',
+    firstOnly: true,
+    conditions: [
+      { left: { a: P('close') }, cmp: '>', right: { a: N(400) } },
+      { left: { a: P('close'), op: '/', b: P('open') }, cmp: '>', right: { a: N(1.005) } },
+      { left: { a: P('open') }, cmp: '>', right: { a: { t: 'ind', ind: 'ema', n: 5, tf: 5, off: 0 }, op: '*', b: N(1) } },
+      { left: { a: P('volume') }, cmp: '>', right: { a: N(100000) } },
+      { left: { a: { t: 'ind', ind: 'rsi', n: 14, tf: 5, off: 0 } }, cmp: '>', right: { a: N(70) } },
+    ],
+  },
 ];

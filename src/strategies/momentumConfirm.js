@@ -1,5 +1,5 @@
 // Strategy: Momentum confirmation (long).
-//   Hit:      the scan's first hit of the day for the stock between `from` and `to` (09:45–12:00
+//   Hit:      the scan's first hit of the day for the stock between `from` and `to` (09:45–14:00
 //             by default; Chartink "10:40 am" = the 10:40 candle, 5 minutes by default).
 //   Confirm:  the very next candle is green (close > open) and closes above the hit candle's
 //             close → buy at once: at the next minute's open after that candle closes.
@@ -17,7 +17,7 @@ import { istDate, istHHMM } from '../emasetup.js';
 export const CONFIRM_DEFAULTS = {
   tf: 5, // candle minutes (the scan's timeframe)
   from: '09:45', // first hit counted from …
-  to: '12:00', // … until (hit candle start)
+  to: '14:00', // … until (hit candle start)
   stop: 'confirm', // 'confirm' = confirmation candle low · 'hit' = hit candle low · 'pct' = stopPct % below the entry
   stopPct: 1,
   lastEntry: '15:00',
@@ -87,7 +87,7 @@ export function runMomentumConfirm({ c1, day, params = {}, at = null }) {
   if (!conf || istDate(conf.time * 1000) !== day) return { ...base, status: 'no-confirm', note: 'no next candle that day' };
   const confAt = istHHMM(conf.time);
   Object.assign(base, { confAt, confOpen: r2(conf.open), confClose: r2(conf.close), confLow: r2(conf.low) });
-  if (!(conf.close > conf.open)) return { ...base, status: 'no-confirm', note: `the ${confAt} candle was red` };
+  if (!(conf.close > conf.open)) return { ...base, status: 'no-confirm', note: conf.close < conf.open ? `the ${confAt} candle was red` : `the ${confAt} candle was flat (open = close), not green` };
   if (!(conf.close > hit.close)) return { ...base, status: 'no-confirm', note: `the ${confAt} candle closed at ${r2(conf.close)}, not above ${r2(hit.close)}` };
 
   const buyAfter = conf.time + tf * 60;
