@@ -15,6 +15,8 @@ import { historyCall } from './historyApi.js';
 //   trade(row) → null | { entryAt, fill, exits: { key: { r, pct, how, at, px } }, bestR }
 //   columns: [{ head, num?, cell(row) }]        strategy-specific columns
 //   csv: { head: [...], row(row) → [...] }      strategy-specific CSV columns
+//   hitWindow?: true                            keep every hit time from the CSV; each stock-day
+//                                               uses its first hit between params.from and params.to
 // }
 
 const GAP_MS = 1500;
@@ -70,7 +72,7 @@ function parseWhen(s) {
   return { day, time };
 }
 
-function readList(text, firstOnly) {
+function readList(text, firstOnly, allHits = false) {
   const rows = parseCsv(text.replace(/^﻿/, ''));
   if (rows.length < 2) throw new Error('The file has no rows');
   const head = rows[0].map((h) => h.trim().toLowerCase());
@@ -88,12 +90,23 @@ function readList(text, firstOnly) {
       skipped++;
       continue;
     }
-    const k = `${w.day}|${symbol}`;
+    const k = allHits ? `${w.day}|${symbol}|${w.time}` : `${w.day}|${symbol}`;
     if (seen.has(k)) continue;
     seen.add(k);
-    out.push({ day: w.day, symbol, time: w.time }); // first hit of the day for the stock
+    out.push({ day: w.day, symbol, time: w.time }); // first hit of the day for the stock (every hit with allHits)
   }
   return { list: out, skipped };
+}
+
+/** Every hit → each stock-day's first hit between from and to (inclusive, "HH:MM"). */
+function firstInWindow(list, from, to) {
+  const out = new Map();
+  for (const x of [...list].sort((a, b) => a.day.localeCompare(b.day) || String(a.time).localeCompare(String(b.time)))) {
+    if (!x.time || (from && x.time < from) || (to && x.time > to)) continue;
+    const k = `${x.day}|${x.symbol}`;
+    if (!out.has(k)) out.set(k, x);
+  }
+  return [...out.values()];
 }
 
 function jobsOf(list) {
@@ -193,7 +206,7 @@ export default function StrategyBacktest({ config }) {
   const stopRef = useRef(false);
 
   const runList = async (items, label, keep, p = params) => {
-    const jobs = jobsOf(items);
+    const jobs = jobsOf(C.hitWindow ? firstInWindow(items, p.from, p.to) : items);
     const total = jobs.length;
     const rows = [...keep];
     let done = 0;
@@ -233,13 +246,15 @@ export default function StrategyBacktest({ config }) {
     setErr('');
     let parsed;
     try {
-      parsed = readList(await f.text(), firstOnly);
+      parsed = readList(await f.text(), firstOnly, !!C.hitWindow);
     } catch (e) {
       setErr(e.message);
       return;
     }
     if (!parsed.list.length) return setErr(firstOnly ? 'No stocks at 09:15 in this file.' : 'No rows found.');
-    const label = `${f.name} · ${parsed.list.length} stock-days${firstOnly ? ` at 09:15 (${parsed.skipped} later hits left out)` : ''}`;
+    const label = C.hitWindow
+      ? `${f.name} · ${parsed.list.length} hits → first hit per stock-day between the times set below (re-read on “Run again”)`
+      : `${f.name} · ${parsed.list.length} stock-days${firstOnly ? ` at 09:15 (${parsed.skipped} later hits left out)` : ''}`;
     setFile(label);
     setList(parsed.list);
     await runList(parsed.list, label, []);
@@ -248,7 +263,9 @@ export default function StrategyBacktest({ config }) {
   const failed = results.filter((r) => r.status === 'error' && !/not found/i.test(r.note || ''));
   const retryFailed = () => {
     const again = new Set(failed.map((r) => `${r.day}|${r.symbol}`));
-    runList(failed.map(({ day, symbol }) => ({ day, symbol })), file, results.filter((r) => !again.has(`${r.day}|${r.symbol}`)), usedParams || params);
+    // keep the hit times from the uploaded list (strategies that enter at the hit need them)
+    const items = list.filter((x) => again.has(`${x.day}|${x.symbol}`));
+    runList(items.length ? items : failed.map(({ day, symbol }) => ({ day, symbol })), file, results.filter((r) => !again.has(`${r.day}|${r.symbol}`)), usedParams || params);
   };
   const changed = usedParams && JSON.stringify(usedParams) !== JSON.stringify(params);
 
