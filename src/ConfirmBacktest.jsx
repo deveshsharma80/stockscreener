@@ -19,7 +19,7 @@ export const CONFIRM_BACKTEST = {
   params: [
     { key: 'from', label: 'First hit from', type: 'select', def: D.from, options: TIMES },
     { key: 'to', label: 'First hit until', type: 'select', def: D.to, options: TIMES },
-    { key: 'tf', label: 'Candle (min)', type: 'select', def: String(D.tf), options: [['3', '3 min'], ['5', '5 min'], ['15', '15 min']] },
+    { key: 'tf', label: 'Candle (min)', type: 'select', def: String(D.tf), options: [['2', '2 min'], ['3', '3 min'], ['5', '5 min'], ['15', '15 min']] },
     { key: 'stop', label: 'Stop loss', type: 'select', def: D.stop, options: [['confirm', 'Confirmation candle low'], ['hit', 'Hit candle low'], ['pct', 'Fixed % below entry']] },
     { key: 'stopPct', label: 'Fixed stop %', type: 'number', step: 0.25, def: D.stopPct },
   ],
