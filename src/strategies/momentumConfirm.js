@@ -4,7 +4,11 @@
 //   Confirm:  the very next candle is green (close > open) and closes above the hit candle's
 //             close → buy at once: at the next minute's open after that candle closes.
 //             Otherwise no trade for that stock that day.
-//   Stop:     the confirmation candle's low (default), the hit candle's low, or a fixed %.
+//   Or (entryMode 'break'): instead of needing the very next candle, buy the first time price
+//             trades above the hit candle's high within `within` candles (a buy-stop at that
+//             high; at the open if a minute opens above it).
+//   Stop:     the confirmation candle's low (default; with 'break' the hit candle's low), the hit
+//             candle's low, or a fixed %.
 //   Exits scored side by side (each also has the stop; everything sold by 15:15):
 //     t1     — 1 % target
 //     r2     — 1:2 (target = 2 × risk)
@@ -18,6 +22,8 @@ export const CONFIRM_DEFAULTS = {
   tf: 5, // candle minutes (the scan's timeframe)
   from: '09:45', // first hit counted from …
   to: '14:00', // … until (hit candle start)
+  entryMode: 'next', // 'next' = next candle green + closes above the hit close · 'break' = price breaks the hit candle's high within `within` candles
+  within: 10, // candles to wait for the break ('break' mode)
   stop: 'confirm', // 'confirm' = confirmation candle low · 'hit' = hit candle low · 'pct' = stopPct % below the entry
   stopPct: 1,
   lastEntry: '15:00',
@@ -86,7 +92,20 @@ export function runMomentumConfirm({ c1, day, params = {}, at = null }) {
   if (hi < 0) return { status: 'waiting', note: `no ${at} candle that day (holiday or not traded?)` };
   const hit = cs[hi];
   const conf = cs[hi + 1];
-  const base = { hitAt: istHHMM(hit.time), hitClose: r2(hit.close) };
+  const base = { hitAt: istHHMM(hit.time), hitClose: r2(hit.close), hitHigh: r2(hit.high) };
+  const exitBySec = Date.parse(`${day}T${P.exitBy}:00+05:30`) / 1000;
+  if (P.entryMode === 'break') {
+    // buy-stop above the hit candle's high, live for `within` candles after the hit candle closes
+    const startSec = hit.time + tf * 60;
+    const untilSec = startSec + Math.max(1, Math.round(Number(P.within) || 10)) * tf * 60;
+    const all = c1.filter((c) => c.time >= startSec && c.time < exitBySec && istDate(c.time * 1000) === day);
+    const k = all.findIndex((c) => c.time < untilSec && c.high > hit.high);
+    if (k < 0) return { ...base, status: 'no-confirm', note: `didn’t break the ${istHHMM(hit.time)} high (${r2(hit.high)}) within ${P.within} candles` };
+    if (istHHMM(all[k].time) >= P.lastEntry) return { ...base, status: 'no-entry', note: `broke out after ${P.lastEntry}` };
+    const mins = all.slice(k);
+    const entry = r2(Math.max(hit.high, mins[0].open));
+    return finish({ base: { ...base, breakAt: istHHMM(mins[0].time), mode: 'break' }, entry, mins, slLow: hit.low, cs, e9, hi, hit, P, tf, day, firstFillMinute: true });
+  }
   if (!conf || istDate(conf.time * 1000) !== day) return { ...base, status: 'no-confirm', note: 'no next candle that day' };
   const confAt = istHHMM(conf.time);
   Object.assign(base, { confAt, confOpen: r2(conf.open), confClose: r2(conf.close), confLow: r2(conf.low) });
@@ -94,11 +113,15 @@ export function runMomentumConfirm({ c1, day, params = {}, at = null }) {
   if (!(conf.close > hit.close)) return { ...base, status: 'no-confirm', note: `the ${confAt} candle closed at ${r2(conf.close)}, not above ${r2(hit.close)}` };
 
   const buyAfter = conf.time + tf * 60;
-  const exitBySec = Date.parse(`${day}T${P.exitBy}:00+05:30`) / 1000;
   const mins = c1.filter((c) => c.time >= buyAfter && c.time < exitBySec && istDate(c.time * 1000) === day);
   if (!mins.length || istHHMM(mins[0].time) >= P.lastEntry) return { ...base, status: 'no-entry', note: `confirmed after ${P.lastEntry}` };
-  const entry = r2(mins[0].open);
-  const sl = r2(P.stop === 'hit' ? hit.low : P.stop === 'pct' ? entry * (1 - (Number(P.stopPct) || 1) / 100) : conf.low);
+  return finish({ base, entry: r2(mins[0].open), mins, slLow: conf.low, cs, e9, hi, hit, P, tf, day, firstFillMinute: false });
+}
+
+// stop, targets and exits from the entry minute on. firstFillMinute: the entry is a buy-stop
+// filled inside mins[0] (its low may come before the fill, so the stop isn't checked there).
+function finish({ base, entry, mins, slLow, cs, e9, hi, hit, P, tf, day, firstFillMinute }) {
+  const sl = r2(P.stop === 'hit' ? hit.low : P.stop === 'pct' ? entry * (1 - (Number(P.stopPct) || 1) / 100) : slLow);
   const risk = entry - sl;
   if (!(risk > 0)) return { ...base, entry, sl, status: 'invalid', note: 'opened at or below the stop' };
   const out = { ...base, status: 'entered', entry, entryAt: istHHMM(mins[0].time), sl, riskPct: r2((risk / entry) * 100) };
@@ -108,13 +131,13 @@ export function runMomentumConfirm({ c1, day, params = {}, at = null }) {
   let best = 0;
   // 9 EMA exit: on each candle close after the entry
   const closeBelow = new Map(); // minute time of the candle's last minute → close price
-  for (let i = hi + 2; i < cs.length && istDate(cs[i].time * 1000) === day; i++) {
+  for (let i = hi + 1; i < cs.length && istDate(cs[i].time * 1000) === day; i++) {
     if (e9[i] != null && cs[i].close < e9[i]) closeBelow.set(cs[i].time + (tf - 1) * 60, cs[i].close);
   }
   for (let j = 0; j < mins.length; j++) {
     const m = mins[j];
     const t = istHHMM(m.time);
-    const stop = m.low <= sl;
+    const stop = m.low <= sl && !(firstFillMinute && j === 0);
     for (const key of Object.keys(targets)) {
       if (done[key]) continue;
       const tgt = targets[key];
