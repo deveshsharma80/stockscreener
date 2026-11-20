@@ -76,6 +76,9 @@ export function runMomentumConfirm({ c1, day, params = {}, at = null }) {
   const tf = [1, 2, 3, 5, 10, 15].includes(Number(P.tf)) ? Number(P.tf) : 5;
   if (!at) return { status: 'waiting', note: 'no hit time — needs a CSV with times (e.g. 10:40 am)' };
   if (at < P.from || at > P.to) return { status: 'outside', hitAt: at, note: `hit at ${at} — outside ${P.from}–${P.to}` };
+  // the hit time must be the start of a tf-minute candle (09:15 + n × tf); otherwise the CSV was
+  // made with another candle size and the hit candle would be guessed wrong (look-ahead)
+  if ((minOf(at) - OPEN_MIN) % tf !== 0) return { status: 'misaligned', hitAt: at, note: `${at} isn't the start of a ${tf}-minute candle — the scan steps through other candles (set the scan's timeframe to ${tf} minutes) or pick the CSV's candle size` };
   const cs = toTf(c1, tf);
   const e9 = emaOf(cs.map((c) => c.close), 9);
   const atMin = minOf(at);

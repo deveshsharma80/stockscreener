@@ -28,6 +28,7 @@ export const CONFIRM_BACKTEST = {
     if (r.status === 'entered') return ['long', 'Confirmed → buy'];
     if (r.status === 'no-confirm') return ['watching', 'Not confirmed'];
     if (r.status === 'outside') return ['expired', 'Outside time window'];
+    if (r.status === 'misaligned') return ['error', 'Time doesn’t fit'];
     if (r.status === 'no-entry') return ['touched', 'Too late'];
     if (r.status === 'invalid') return ['expired', 'Opened below stop'];
     if (r.status === 'error') return ['error', 'Error'];
