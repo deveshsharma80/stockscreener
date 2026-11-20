@@ -7,7 +7,11 @@
 //   Or (entryMode 'break'): instead of needing the very next candle, buy the first time price
 //             trades above the hit candle's high within `within` candles (a buy-stop at that
 //             high; at the open if a minute opens above it).
-//   Stop:     the confirmation candle's low (default; with 'break' the hit candle's low), the hit
+//   Or (entryMode 'breakGreen'): wait for a candle (within `within` candles) that trades above
+//             the hit candle's high AND closes green → buy at the next minute's open after it
+//             closes. 'breakGreenAbove' also needs that close to be above the hit candle's high.
+//   Stop:     the confirmation candle's low (default; with 'break' the hit candle's low; with the
+//             'breakGreen' modes the breakout candle's low), the hit
 //             candle's low, or a fixed %.
 //   Exits scored side by side (each also has the stop; everything sold by 15:15):
 //     t1     — 1 % target
@@ -22,7 +26,7 @@ export const CONFIRM_DEFAULTS = {
   tf: 5, // candle minutes (the scan's timeframe)
   from: '09:45', // first hit counted from …
   to: '14:00', // … until (hit candle start)
-  entryMode: 'next', // 'next' = next candle green + closes above the hit close · 'break' = price breaks the hit candle's high within `within` candles
+  entryMode: 'next', // 'next' = next candle green + closes above the hit close · 'break' = price breaks the hit candle's high within `within` candles · 'breakGreen' / 'breakGreenAbove' = a green candle that breaks the high (and closes above it)
   within: 10, // candles to wait for the break ('break' mode)
   stop: 'confirm', // 'confirm' = confirmation candle low · 'hit' = hit candle low · 'pct' = stopPct % below the entry
   stopPct: 1,
@@ -94,6 +98,23 @@ export function runMomentumConfirm({ c1, day, params = {}, at = null }) {
   const conf = cs[hi + 1];
   const base = { hitAt: istHHMM(hit.time), hitClose: r2(hit.close), hitHigh: r2(hit.high) };
   const exitBySec = Date.parse(`${day}T${P.exitBy}:00+05:30`) / 1000;
+  if (P.entryMode === 'breakGreen' || P.entryMode === 'breakGreenAbove') {
+    const strict = P.entryMode === 'breakGreenAbove';
+    const n = Math.max(1, Math.round(Number(P.within) || 10));
+    let j = -1;
+    for (let i = hi + 1; i <= hi + n && i < cs.length && istDate(cs[i].time * 1000) === day; i++) {
+      const c = cs[i];
+      if (c.high > hit.high && c.close > c.open && (!strict || c.close > hit.high)) {
+        j = i;
+        break;
+      }
+    }
+    if (j < 0) return { ...base, status: 'no-confirm', note: `no green candle ${strict ? 'closing above' : 'breaking'} the ${istHHMM(hit.time)} high (${r2(hit.high)}) within ${n} candles` };
+    const bc = cs[j];
+    const mins = c1.filter((c) => c.time >= bc.time + tf * 60 && c.time < exitBySec && istDate(c.time * 1000) === day);
+    if (!mins.length || istHHMM(mins[0].time) >= P.lastEntry) return { ...base, status: 'no-entry', note: `breakout candle closed after ${P.lastEntry}` };
+    return finish({ base: { ...base, breakAt: istHHMM(bc.time), breakOpen: r2(bc.open), breakClose: r2(bc.close), mode: 'breakGreen' }, entry: r2(mins[0].open), mins, slLow: bc.low, cs, e9, hi, hit, P, tf, day, firstFillMinute: false });
+  }
   if (P.entryMode === 'break') {
     // buy-stop above the hit candle's high, live for `within` candles after the hit candle closes
     const startSec = hit.time + tf * 60;

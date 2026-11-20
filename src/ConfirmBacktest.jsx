@@ -20,14 +20,14 @@ export const CONFIRM_BACKTEST = {
     { key: 'from', label: 'First hit from', type: 'select', def: D.from, options: TIMES },
     { key: 'to', label: 'First hit until', type: 'select', def: D.to, options: TIMES },
     { key: 'tf', label: 'Candle (min)', type: 'select', def: String(D.tf), options: [['2', '2 min'], ['3', '3 min'], ['5', '5 min'], ['15', '15 min']] },
-    { key: 'entryMode', label: 'Entry', type: 'select', def: D.entryMode, options: [['next', 'Next candle green & closes higher'], ['break', 'Break of the hit candle’s high']] },
+    { key: 'entryMode', label: 'Entry', type: 'select', def: D.entryMode, options: [['next', 'Next candle green & closes higher'], ['break', 'Break of the hit candle’s high'], ['breakGreen', 'Green candle that breaks the high'], ['breakGreenAbove', 'Green candle closing above the high']] },
     { key: 'within', label: 'Wait for the break (candles)', type: 'number', step: 1, def: D.within },
     { key: 'stop', label: 'Stop loss', type: 'select', def: D.stop, options: [['confirm', 'Confirmation candle low'], ['hit', 'Hit candle low'], ['pct', 'Fixed % below entry']] },
     { key: 'stopPct', label: 'Fixed stop %', type: 'number', step: 0.25, def: D.stopPct },
   ],
   exits: CONFIRM_EXITS,
   statusOf(r) {
-    if (r.status === 'entered') return ['long', r.mode === 'break' ? 'High broken → buy' : 'Confirmed → buy'];
+    if (r.status === 'entered') return ['long', r.mode === 'breakGreen' ? 'Green breakout → buy' : r.mode === 'break' ? 'High broken → buy' : 'Confirmed → buy'];
     if (r.status === 'no-confirm') return ['watching', 'Not confirmed'];
     if (r.status === 'outside') return ['expired', 'Outside time window'];
     if (r.status === 'misaligned') return ['error', 'Time doesn’t fit'];
@@ -42,7 +42,7 @@ export const CONFIRM_BACKTEST = {
   },
   columns: [
     { head: 'Hit', num: true, cell: (r) => (r.hitAt ? <>{r.hitAt}<div className="muted-cell ema-note">close {fmt(r.hitClose)}</div></> : '—') },
-    { head: 'Next candle / break', num: true, cell: (r) => (r.breakAt ? <>{r.breakAt}<div className="muted-cell ema-note">above {fmt(r.hitHigh)}</div></> : r.confAt ? <>{r.confAt}<div className={`ema-note ${r.confClose > r.confOpen ? 'pos' : 'neg'}`}>{fmt(r.confOpen)} → {fmt(r.confClose)}</div></> : '—') },
+    { head: 'Next candle / break', num: true, cell: (r) => (r.breakAt ? <>{r.breakAt}<div className="muted-cell ema-note">{r.breakClose != null ? `${fmt(r.breakOpen)} → ${fmt(r.breakClose)} · ` : ''}above {fmt(r.hitHigh)}</div></> : r.confAt ? <>{r.confAt}<div className={`ema-note ${r.confClose > r.confOpen ? 'pos' : 'neg'}`}>{fmt(r.confOpen)} → {fmt(r.confClose)}</div></> : '—') },
     { head: 'Buy ↑', num: true, cell: (r) => (r.entry ? <><b>{fmt(r.entry)}</b><div className="muted-cell ema-note">at {r.entryAt}</div></> : '—') },
     { head: 'Stop', num: true, cell: (r) => (r.sl ? <><span className="neg">{fmt(r.sl)}</span>{r.riskPct != null && <div className="muted-cell ema-note">{r.riskPct}% risk</div>}</> : '—') },
   ],
