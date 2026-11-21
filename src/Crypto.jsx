@@ -449,9 +449,9 @@ function AddCoin({ existing, onAdd }) {
 
 const palette = (dark) =>
   dark
-    ? { up: '#16a34a', down: '#ea580c', text: '#93a29a', grid: '#26312c', bg: '#151c19', cross: '#5b6b63', fast: '#3b82f6', slow: '#c026d3', bb: '#22d3ee', rsi: '#fbbf24', lvl: '#5b6b63' }
+    ? { up: '#16a34a', down: '#ea580c', text: '#94a3b8', grid: '#1e293b', bg: '#111827', cross: '#475569', fast: '#3b82f6', slow: '#c026d3', bb: '#22d3ee', rsi: '#fbbf24', lvl: '#475569' }
     : { up: '#15803d', down: '#c2410c', text: '#5f6b65', grid: '#e9ece7', bg: '#ffffff', cross: '#9aa39e', fast: '#1d4ed8', slow: '#a21caf', bb: '#0e7490', rsi: '#b45309', lvl: '#9aa39e' };
-const prefersDark = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+const prefersDark = () => true; // the app is always dark (same theme as the Strategy Lab)
 const shift = (t) => t + IST_OFFSET; // chart axis in Indian time
 
 const EXIT_COLORS = { SL: '#dc2626', TP: '#16a34a', ENTRY: '#94a3b8' };
@@ -504,7 +504,7 @@ function CryptoChart({ symbol, symbols, interval, onInterval, cfg, setCfg, tick,
   useEffect(() => {
     const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
     if (!mq) return;
-    const on = () => setDark(mq.matches);
+    const on = () => setDark(prefersDark());
     mq.addEventListener('change', on);
     return () => mq.removeEventListener('change', on);
   }, []);

@@ -30,11 +30,11 @@ function readEma() {
 // Up/down colours validated for colour-blind separation (see styles.css P&L bars)
 const palette = (dark) =>
   dark
-    ? { up: '#16a34a', down: '#ea580c', text: '#93a29a', grid: '#26312c', bg: '#151c19', cross: '#5b6b63', fast: '#3b82f6', slow: '#c026d3' }
+    ? { up: '#16a34a', down: '#ea580c', text: '#94a3b8', grid: '#1e293b', bg: '#111827', cross: '#475569', fast: '#3b82f6', slow: '#c026d3' }
     : { up: '#15803d', down: '#c2410c', text: '#5f6b65', grid: '#e9ece7', bg: '#ffffff', cross: '#9aa39e', fast: '#1d4ed8', slow: '#a21caf' };
 // EMA colours checked with the colour-blind validator against the candle colours;
 // the slow line is also dashed so the two never rely on colour alone.
-const prefersDark = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+const prefersDark = () => true; // the app is always dark (same theme as the Strategy Lab)
 const shift = (c) => ({ ...c, time: c.time + IST_OFFSET }); // the chart shows UTC; shift so axes read IST
 const compactVol = (v) => (v >= 1e7 ? `${(v / 1e7).toFixed(2)}Cr` : v >= 1e5 ? `${(v / 1e5).toFixed(2)}L` : v >= 1e3 ? `${(v / 1e3).toFixed(1)}K` : String(v));
 
@@ -97,7 +97,7 @@ export default function Chart({ secret, row, quote, marketOpen, onClose, positio
   useEffect(() => {
     const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
     if (!mq) return;
-    const on = () => setDark(mq.matches);
+    const on = () => setDark(prefersDark());
     mq.addEventListener('change', on);
     return () => mq.removeEventListener('change', on);
   }, []);
