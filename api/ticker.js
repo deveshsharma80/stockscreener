@@ -40,8 +40,8 @@
 // GET  ?action=paper-stops / POST {action:"paper-stops", enabled?, EQ_INTRADAY?, IDX_OPT_BUY?, STK_OPT_BUY?}
 //      default stop loss (% from entry) added to every new paper position
 //
-// Scanners (your own scans — lib/scanners.js; run on the Vultr history server):
-// GET ?action=scanners · POST {action:"scanner-save", scanner} · POST {action:"scanner-delete", id}
+// Scanners and Back Test moved to the Strategy Lab app; it reaches scans, Dhan and the
+// Vultr token through /api/link (LAB_LINK_SECRET).
 //
 // Automated trading (EMA Rejection shorts, own money — lib/autotrade.js):
 // GET  ?action=auto                                    account, rules, trades, P&L
@@ -58,9 +58,7 @@ import { CHARGE_MODEL, PRODUCTS, addTrade, defaultStopFor, readStops, setStops, 
 import { deleteNotes, fillsToDelete, readNotes, roundTrips, saveNote } from '../lib/journal.js';
 import { cancelOrder, cancelOrphanExits, createOrder, ignoreHours, isExit, openKeys, parseSeenTicks, processOrders, readOrders, sessionEnd, setExit } from '../lib/orders.js';
 import { isFeedServer, notifyNse, streamToken } from '../lib/feed.js';
-import { backtestSymbol, runEmaSetups } from '../lib/emasetup.js';
-import { backtestStrategy } from '../lib/backtest.js';
-import { deleteScanner, readScanners, saveScanner } from '../lib/scanners.js';
+import { runEmaSetups } from '../lib/emasetup.js';
 import { autoLevels, autoView, closeAuto, resetAuto, runAuto, setAutoSettings } from '../lib/autotrade.js';
 import {
   DhanError,
@@ -160,29 +158,6 @@ export default async function handler(req, res) {
         await notifyNse('auto trade closed');
         return res.json({ ok: true, result: r });
       }
-      case 'POST ema-backtest': {
-        // Signals → EMA Rejection → Backtest: one stock, its screener days
-        const symbol = String(body.symbol || '').trim().toUpperCase().slice(0, 40);
-        const days = (Array.isArray(body.days) ? body.days : []).map(String).slice(0, 60);
-        if (!symbol || !days.length) throw new HttpError(400, 'Give a symbol and its days');
-        return res.json({ ok: true, rows: await backtestSymbol(symbol, days) });
-      }
-      case 'POST backtest': {
-        // Auto Trading → Back Test: any strategy, one stock, its screener days
-        const symbol = String(body.symbol || '').trim().toUpperCase().slice(0, 40);
-        const days = (Array.isArray(body.days) ? body.days : []).map(String).slice(0, 60);
-        if (!symbol || !days.length) throw new HttpError(400, 'Give a symbol and its days');
-        const times = {};
-        for (const [d, t] of Object.entries(body.times && typeof body.times === 'object' ? body.times : {})) if (/^\d{4}-\d{2}-\d{2}$/.test(d) && /^\d{2}:\d{2}$/.test(String(t))) times[d] = String(t);
-        return res.json({ ok: true, rows: await backtestStrategy(String(body.strategy || ''), symbol, days, body.params, times) });
-      }
-      case 'GET scanners':
-        return res.json({ ok: true, scanners: await readScanners() });
-      case 'POST scanner-save':
-        return res.json({ ok: true, scanner: await saveScanner(body.scanner) });
-      case 'POST scanner-delete':
-        await deleteScanner(String(body.id || ''));
-        return res.json({ ok: true });
       case 'GET feed-token':
         // live prices straight from the feed server (Vultr); null → pages keep polling
         return res.json({ ok: true, stream: streamToken() });

@@ -16,8 +16,6 @@ import { SETUP_EVENT } from './liveFeed.js';
 import Calculator from './Calculator.jsx';
 import Settings from './Settings.jsx';
 import AutoTrade from './AutoTrade.jsx';
-import BackTest from './BackTest.jsx';
-import Scanners from './Scanners.jsx';
 import BBScan from './BBScan.jsx';
 import Login from './Login.jsx';
 import LivePnl from './LivePnl.jsx';
@@ -73,18 +71,11 @@ export const SECTIONS = [
     ],
   },
   {
-    id: 'scanners',
-    label: 'Scanners',
-    icon: 'scan',
-    tabs: [['scans', 'My scans', 'Build your own scans (EMA, Bollinger, RSI… on 1, 2, 3, 5, 15-minute candles) and test them on a year of history']],
-  },
-  {
     id: 'auto',
     label: 'Auto Trading',
     icon: 'robot',
     tabs: [
       ['trades', 'Auto Trades', 'Paper shorts placed automatically from EMA Rejection alerts — own money, max 3 a day, full 5× split over 3'],
-      ['backtest', 'Back Test', 'Test a strategy on past screener results with real Dhan candles'],
     ],
   },
   {
@@ -142,7 +133,7 @@ export const SECTIONS = [
 ];
 // Left-menu parent groups (markets). Each section belongs to one group.
 export const GROUPS = [
-  { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'scanners', 'market', 'trades', 'paper', 'auto'] },
+  { id: 'nse', label: 'NSE Market', short: 'NSE', sections: ['signals', 'market', 'trades', 'paper', 'auto'] },
   { id: 'crypto', label: 'Crypto', short: '₿', sections: ['crypto', 'cpos', 'cpaper', 'movers', 'candles'] },
   { id: 'tools', label: 'Tools', short: '⚒', sections: ['calc', 'settings'] },
 ];
@@ -1094,8 +1085,7 @@ function Shell({ auth, onLogout }) {
           {section.id === 'cpos' && <CryptoPositions />}
           {section.id === 'cpaper' && <CryptoPaper tab={tab} />}
           {section.id === 'paper' && <Pnl subview={tab} />}
-          {section.id === 'auto' && (tab === 'backtest' ? <BackTest /> : <AutoTrade />)}
-          {section.id === 'scanners' && <Scanners />}
+          {section.id === 'auto' && <AutoTrade />}
           {section.id === 'calc' && <Calculator market={tab} />}
           {section.id === 'settings' && <Settings />}
         </div>
