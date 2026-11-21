@@ -1547,8 +1547,9 @@ h1, h2, b, strong { color: var(--text-strong); }
 input[type='date'], input[type='time'] { color-scheme: dark; }
 input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 
-/* menu */
-.sidenav { padding: 18px 14px; gap: 8px; }
+/* menu — scrolls on its own when the items are taller than the window */
+.sidenav { padding: 18px 14px; gap: 8px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.sidenav > * { flex-shrink: 0; }
 .brand { padding: 4px 8px 18px; gap: 12px; border-bottom: 1px solid var(--border); margin: 0 -14px 6px; padding-left: 22px; }
 .nav-collapsed .brand { margin: 0 -10px 6px; }
 .brand-mark { width: 40px; height: 40px; border-radius: 10px; background: var(--accent-tint); border: 1px solid rgb(16 185 129 / 0.4); color: var(--accent); }
